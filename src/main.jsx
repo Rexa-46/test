@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App (2).jsx";
+import App from "./App (3).jsx";
 
 class StartupErrorBoundary extends React.Component {
   constructor(props) {
