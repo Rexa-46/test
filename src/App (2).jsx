@@ -22,6 +22,7 @@ import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import { BiometricAuth } from "@aparajita/capacitor-biometric-auth";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
+import { TextToSpeech } from "@capacitor-community/text-to-speech";
 
 /* ---------------------------------------------------------
    Helpers
@@ -1194,6 +1195,7 @@ function DailySentenceSplash({ onDone }) {
   const [fading, setFading] = useState(false);
   const timers = useRef([]);
   const finished = useRef(false);
+  const speakId = useRef(0);
   const later = (fn, ms) => { const id = setTimeout(fn, ms); timers.current.push(id); return id; };
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
 
@@ -1203,6 +1205,7 @@ function DailySentenceSplash({ onDone }) {
     finished.current = true;
     clearTimers();
     try { window.speechSynthesis?.cancel(); } catch {}
+    try { if (Capacitor.isNativePlatform()) TextToSpeech.stop(); } catch {}
     setSpeaking(false);
     setFading(true);
     setTimeout(onDone, 650);
@@ -1219,6 +1222,19 @@ function DailySentenceSplash({ onDone }) {
   const speak = useCallback(() => {
     if (!en) return;
     clearTimers();
+    // اندروید (APK): صدای مرورگر در WebView کار نمی‌کند؛ از موتور TTS خود گوشی استفاده می‌شود
+    if (Capacitor.isNativePlatform()) {
+      const id = ++speakId.current;
+      const done = () => { if (id === speakId.current) afterSpeech(); };
+      (async () => {
+        try { await TextToSpeech.stop(); } catch {}
+        setSpeaking(true);
+        try { await TextToSpeech.speak({ text: en, lang: "en-US", rate: 0.85, pitch: 1.0, volume: 1.0, category: "playback" }); } catch {}
+        done();
+      })();
+      later(done, 15000);
+      return;
+    }
     const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
     if (!synth || typeof SpeechSynthesisUtterance === "undefined") {
       // دستگاه صدا ندارد: ۵ ثانیه برای خواندن جمله، بعد ۲ ثانیه و فید
@@ -1244,7 +1260,7 @@ function DailySentenceSplash({ onDone }) {
   useEffect(() => {
     let alive = true;
     resolveTodaySentence().then((r) => { if (alive) setSentence(r); });
-    return () => { alive = false; clearTimers(); try { window.speechSynthesis?.cancel(); } catch {} };
+    return () => { alive = false; clearTimers(); try { window.speechSynthesis?.cancel(); } catch {} try { if (Capacitor.isNativePlatform()) TextToSpeech.stop(); } catch {} };
     // eslint-disable-next-line
   }, []);
   useEffect(() => {
