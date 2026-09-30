@@ -1063,10 +1063,141 @@ function normalizeCategoriesForHierarchy(list) {
   return out;
 }
 
+/* ---------------------------------------------------------
+   جمله روزانه انگلیسی — اسپلاش هنگام هر بار باز شدن برنامه؛ جمله تا پایان همان روز ثابت است
+   تلفظ با صدای دستگاه پخش می‌شود؛ ۲ ثانیه بعد از پایان تلفظ با فید وارد برنامه می‌شود.
+--------------------------------------------------------- */
+const DAILY_SENTENCES = [
+  ["How are you doing today?", "هاو آر یو دوئینگ تودِی", "امروز حالت چطوره؟"],
+  ["Nice to meet you.", "نایس تو میت یو", "از آشنایی با شما خوشوقتم."],
+  ["What do you do for a living?", "وات دو یو دو فُر ا لیوینگ", "شغلت چیه؟"],
+  ["Could you say that again, please?", "کود یو سِی دَت اِگِن پلیز", "لطفاً می‌شه دوباره بگید؟"],
+  ["I'm sorry, I didn't catch that.", "آیم سُری، آی دیدنت کَچ دَت", "ببخشید، متوجه نشدم."],
+  ["Can you speak more slowly?", "کَن یو اسپیک مُر اسلولی", "می‌تونید آهسته‌تر صحبت کنید؟"],
+  ["Where is the nearest bus stop?", "وِر ایز دِ نی‌یِرست باس استاپ", "نزدیک‌ترین ایستگاه اتوبوس کجاست؟"],
+  ["How much does this cost?", "هاو ماچ داز دیس کاست", "این چقدره؟"],
+  ["I would like a cup of coffee, please.", "آی وود لایک ا کاپ آو کافی پلیز", "لطفاً یک فنجان قهوه می‌خوام."],
+  ["Can I have the menu, please?", "کَن آی هَو دِ منیو پلیز", "ممکنه منو رو بیارید؟"],
+  ["Could I have the bill, please?", "کود آی هَو دِ بیل پلیز", "ممکنه صورت‌حساب رو بیارید؟"],
+  ["Excuse me, where is the restroom?", "اکسکیوز می، وِر ایز دِ رِست‌روم", "ببخشید، سرویس بهداشتی کجاست؟"],
+  ["I'm looking for a pharmacy.", "آیم لوکینگ فُر ا فارمسی", "دنبال داروخانه می‌گردم."],
+  ["What time does it start?", "وات تایم داز ایت استارت", "ساعت چند شروع می‌شه؟"],
+  ["Let's meet at five o'clock.", "لِتس میت اَت فایو اُکلاک", "ساعت پنج همدیگه رو ببینیم."],
+  ["I'll call you later.", "آیل کال یو لِیتِر", "بعداً بهت زنگ می‌زنم."],
+  ["Can you help me, please?", "کَن یو هِلپ می پلیز", "لطفاً می‌تونید کمکم کنید؟"],
+  ["I don't understand.", "آی دُنت آندِراستَند", "نمی‌فهمم."],
+  ["What does this word mean?", "وات داز دیس وُرد مین", "این کلمه یعنی چی؟"],
+  ["How do you spell your name?", "هاو دو یو اسپل یور نِیم", "اسمت رو چطور هجی می‌کنی؟"],
+  ["It's a pleasure to see you again.", "ایتس ا پِلژِر تو سی یو اِگِن", "خوشحالم دوباره می‌بینمت."],
+  ["Have a great weekend!", "هَو ا گرِیت ویکند", "آخر هفته‌ی خوبی داشته باشی!"],
+  ["What's the weather like today?", "واتس دِ وِدِر لایک تودِی", "امروز هوا چطوره؟"],
+  ["I'm on my way.", "آیم آن مای وِی", "دارم میام."],
+  ["Take your time.", "تِیک یور تایم", "عجله نکن."],
+  ["That sounds like a good idea.", "دَت ساوندز لایک ا گود آیدیا", "فکر خوبی به نظر می‌رسه."],
+  ["I'm running a little late.", "آیم رانینگ ا لیتِل لِیت", "کمی دیر می‌رسم."],
+  ["Can I pay by card?", "کَن آی پِی بای کارد", "می‌تونم با کارت پرداخت کنم؟"],
+  ["Do you have any vegetarian dishes?", "دو یو هَو اِنی وِجِتِرین دیشز", "غذای گیاهی دارید؟"],
+  ["I've been learning English for a year.", "آیو بین لرنینگ اینگلیش فُر ا یی‌یر", "یک سال است انگلیسی یاد می‌گیرم."],
+  ["Could you recommend a good restaurant?", "کود یو رِکِمِند ا گود رِستورانت", "می‌تونید رستوران خوبی پیشنهاد بدید؟"],
+  ["See you tomorrow!", "سی یو تومارُ", "فردا می‌بینمت!"],
+  ["Thank you so much for your help.", "ثَنک یو سُ ماچ فُر یور هِلپ", "بابت کمکتون خیلی ممنونم."],
+  ["You're welcome.", "یُر ولکام", "خواهش می‌کنم."],
+  ["What's your favorite food?", "واتس یور فِیوریت فود", "غذای مورد علاقه‌ات چیه؟"],
+  ["I need to buy some groceries.", "آی نید تو بای سام گروسِریز", "باید کمی خواربار بخرم."],
+  ["Where are you from?", "وِر آر یو فرام", "اهل کجایی؟"],
+  ["Do you know how to get to the airport?", "دو یو نُ هاو تو گِت تو دِ اِرپُرت", "می‌دونی چطور به فرودگاه برم؟"],
+  ["I'd like to book a table for two.", "آید لایک تو بوک ا تِیبل فُر تو", "می‌خوام یه میز برای دو نفر رزرو کنم."],
+  ["It was nice talking to you.", "ایت واز نایس تاکینگ تو یو", "از صحبت با شما لذت بردم."],
+];
+function dailySentenceOfToday() {
+  const dayNum = Math.floor(new Date(todayISO()).getTime() / 86400000);
+  return DAILY_SENTENCES[((dayNum % DAILY_SENTENCES.length) + DAILY_SENTENCES.length) % DAILY_SENTENCES.length];
+}
+function DailySentenceSplash({ onDone }) {
+  const [en, faPron, faMean] = useMemo(dailySentenceOfToday, []);
+  const [speaking, setSpeaking] = useState(false);
+  const [fading, setFading] = useState(false);
+  const timers = useRef([]);
+  const finished = useRef(false);
+  const later = (fn, ms) => { const id = setTimeout(fn, ms); timers.current.push(id); return id; };
+  const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
+
+  // فید و ورود به برنامه
+  const leave = useCallback(() => {
+    if (finished.current) return;
+    finished.current = true;
+    clearTimers();
+    try { window.speechSynthesis?.cancel(); } catch {}
+    setSpeaking(false);
+    setFading(true);
+    setTimeout(onDone, 650);
+  }, [onDone]);
+
+  // پایان تلفظ → ۲ ثانیه مکث → فید
+  const afterSpeech = useCallback(() => {
+    if (finished.current) return;
+    setSpeaking(false);
+    clearTimers();
+    later(leave, 2000);
+  }, [leave]);
+
+  const speak = useCallback(() => {
+    clearTimers();
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") {
+      // دستگاه صدا ندارد: ۵ ثانیه برای خواندن جمله، بعد ۲ ثانیه و فید
+      setSpeaking(false);
+      later(afterSpeech, 5000);
+      return;
+    }
+    try {
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(en);
+      u.lang = "en-US"; u.rate = 0.85; u.pitch = 1;
+      let started = false;
+      u.onstart = () => { started = true; setSpeaking(true); };
+      u.onend = afterSpeech;
+      u.onerror = afterSpeech;
+      synth.speak(u);
+      // اگر ۳ ثانیه شروع نشد (مثلا صدا مسدود بود) یا onend هرگز نیامد، ادامه بده
+      later(() => { if (!started) afterSpeech(); }, 3000);
+      later(afterSpeech, 15000);
+    } catch { later(afterSpeech, 5000); }
+  }, [en, afterSpeech]);
+
+  useEffect(() => {
+    later(speak, 500);
+    return () => { clearTimers(); try { window.speechSynthesis?.cancel(); } catch {} };
+    // eslint-disable-next-line
+  }, []);
+
+  return (
+    <div dir="rtl" style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "32px 24px", boxSizing: "border-box", fontFamily: FONT, color: "#fff",
+      background: `linear-gradient(160deg, ${BRAND.header}, ${BRAND.violet})`,
+      opacity: fading ? 0 : 1, transition: "opacity .6s ease", position: "relative",
+    }}>
+      <style>{`@keyframes rexaPulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.18);opacity:1}}`}</style>
+      <div style={{ fontSize: 12.5, fontWeight: 700, opacity: 0.8, letterSpacing: 0.5, marginBottom: 22 }}>جمله روز انگلیسی</div>
+      <div style={{ fontSize: 40, marginBottom: 18, animation: speaking ? "rexaPulse 1s ease-in-out infinite" : "none" }}>🔊</div>
+      <div style={{ direction: "ltr", textAlign: "center", fontSize: 26, fontWeight: 800, lineHeight: 1.45, maxWidth: 360 }}>{en}</div>
+      <div style={{ marginTop: 16, fontSize: 15, fontWeight: 600, color: "#e8dcf5", textAlign: "center", lineHeight: 1.8, maxWidth: 340 }}>{faPron}</div>
+      <div style={{ marginTop: 14, width: 48, height: 2, borderRadius: 2, background: "rgba(255,255,255,.35)" }} />
+      <div style={{ marginTop: 14, fontSize: 16.5, fontWeight: 700, textAlign: "center", lineHeight: 1.9, maxWidth: 340 }}>{faMean}</div>
+      <div style={{ display: "flex", gap: 10, marginTop: 34 }}>
+        <button onClick={speak} style={{ border: "1.5px solid rgba(255,255,255,.45)", background: "rgba(255,255,255,.12)", color: "#fff", borderRadius: 22, padding: "9px 18px", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>پخش دوباره</button>
+        <button onClick={leave} style={{ border: "none", background: "#fff", color: BRAND.header, borderRadius: 22, padding: "9px 22px", fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>ورود به برنامه</button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [settings, setSettings] = useState(seedSettings());
   const [unlocked, setUnlocked] = useState(false);
+  const [dailySplash, setDailySplash] = useState(true); // هر بار باز شدن برنامه نمایش داده می‌شود؛ جمله تا پایان همان روز ثابت است
 
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -1436,6 +1567,7 @@ export default function App() {
   const t = THEME[settings.theme] || THEME.light;
   Object.assign(BRAND, COLOR_PRESETS[settings.themeColor] || COLOR_PRESETS.purple);
 
+  if (dailySplash) return <DailySentenceSplash onDone={() => setDailySplash(false)} />;
   if (!loaded) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, background: BRAND.header, fontFamily: FONT }}>
