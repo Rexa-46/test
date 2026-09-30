@@ -400,9 +400,14 @@ function GaugeSpeedometer({ pct, label, colorFrom = "#B01E4A", colorTo = "#1E844
 /* ---------------------------------------------------------
    Bank card carousel — swipeable, with a show/hide-balance eye
 --------------------------------------------------------- */
+// تاریخ انقضا: ۴ رقم و یک «/» بین دو رقم اول و دو رقم دوم (مثلا 04/08)
+const toEnDigits = (v) => String(v || "").replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d)).replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
+function fmtExpiry4(v) { const d = toEnDigits(v).replace(/\D/g, "").slice(0, 4); return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d; }
+function expiryFromStored(v) { let d = toEnDigits(v).replace(/\D/g, ""); if (d.length >= 6) d = d.slice(2, 6); return fmtExpiry4(d); } // مقدارهای قدیمی مثل 1406/08 → 06/08
 function BankCard({ account, balance, hidden, currency, usdRate, onEdit }) {
   const rawCard = String(account.cardNumber || "").replace(/\D/g, "").slice(0, 16);
   const cardNumber = rawCard.length === 16 ? rawCard.replace(/(.{4})/g, "$1 ").trim() : (account.cardNumberLast4 ? `•••• •••• •••• ${account.cardNumberLast4}` : "شماره کارت ثبت نشده");
+  const expiryDate = expiryFromStored(account.expiryDate) || "—";
   return (
     <div style={{
       minWidth: 300, maxWidth: 300, height: 176, borderRadius: 18, padding: 18, color: "#fff", flexShrink: 0,
@@ -421,7 +426,7 @@ function BankCard({ account, balance, hidden, currency, usdRate, onEdit }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", zIndex: 1 }}>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 9.5, opacity: 0.72 }}>تاریخ انقضا</div>
-          <div style={{ fontSize: 13, fontWeight: 800, direction: "ltr" }}>{account.expiryDate || "—"}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, direction: "ltr" }}>{expiryDate}</div>
         </div>
         <div style={{ textAlign: "left" }}>
           <div style={{ fontSize: 11, opacity: 0.8 }}>{account.type === "card" ? "کارت" : "بانک"}</div>
@@ -609,9 +614,9 @@ function SmileFrownArc({ income, expense }) {
   const color = net > 0 ? "#22A559" : net < 0 ? "#E5384B" : "#F59E0B";
   const w = 220, h = 56, strokeW = 13;
   const d = net > 0
-    ? `M 18 ${h * 0.78} Q ${w * 0.50} ${h * 0.52} ${w - 18} ${h * 0.22}`
+    ? `M 18 ${h * 0.30} Q ${w / 2} ${h * 0.90} ${w - 18} ${h * 0.30}`   // لبخند ∪ (درآمد بیشتر)
     : net < 0
-      ? `M 18 ${h * 0.22} Q ${w * 0.50} ${h * 0.48} ${w - 18} ${h * 0.78}`
+      ? `M 18 ${h * 0.70} Q ${w / 2} ${h * 0.14} ${w - 18} ${h * 0.70}`  // اخم ∩ (هزینه بیشتر)
       : `M 18 ${h / 2} L ${w - 18} ${h / 2}`;
   return (
     <div style={{ display: "flex", justifyContent: "center", paddingTop: 14 }}>
@@ -2413,14 +2418,14 @@ function AccountsManager({ accounts, addAccount, deleteAccount, updateAccount, a
       name: initialEditAccount.name || "",
       initial: String(initialEditAccount.initial || 0),
       cardNumber: String(initialEditAccount.cardNumber || ""),
-      expiryDate: initialEditAccount.expiryDate || "",
+      expiryDate: expiryFromStored(initialEditAccount.expiryDate),
     });
     setAccountEditTarget?.(null);
   }, [initialEditAccount]);
 
   function openEdit(a) {
     setEditingId(a.id);
-    setEditForm({ name: a.name || "", initial: String(a.initial || 0), cardNumber: String(a.cardNumber || ""), expiryDate: a.expiryDate || "" });
+    setEditForm({ name: a.name || "", initial: String(a.initial || 0), cardNumber: String(a.cardNumber || ""), expiryDate: expiryFromStored(a.expiryDate) });
   }
   function saveEdit(a) {
     if (!editForm.name.trim()) return;
@@ -2451,7 +2456,7 @@ function AccountsManager({ accounts, addAccount, deleteAccount, updateAccount, a
       <AmountInput placeholder="موجودی اولیه (ریال)" value={initial} onChange={setInitial} style={st.input} />
       {(type === "bank" || type === "card") && <>
         <input placeholder="شماره کارت ۱۶ رقمی" value={cardNumber} onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16))} style={st.input} inputMode="numeric" maxLength={16} />
-        <input placeholder="تاریخ انقضا، مثلا ۱۴۰۶/۰۸" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value.slice(0, 10))} style={st.input} inputMode="numeric" />
+        <input placeholder="تاریخ انقضا، مثلا 04/08" value={expiryDate} onChange={(e) => setExpiryDate(fmtExpiry4(e.target.value))} style={st.input} inputMode="numeric" maxLength={5} />
       </>}
       <button onClick={add} style={st.primaryBtn}>افزودن</button>
     </div>
@@ -2469,7 +2474,7 @@ function AccountsManager({ accounts, addAccount, deleteAccount, updateAccount, a
           <AmountInput value={editForm.initial} onChange={(v) => setEditForm(f => ({ ...f, initial: v }))} placeholder="موجودی اولیه" style={{ ...st.input, marginBottom: 7 }} />
           {(a.type === "bank" || a.type === "card") && <>
             <input value={editForm.cardNumber} onChange={(e) => setEditForm(f => ({ ...f, cardNumber: e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16) }))} placeholder="شماره کارت ۱۶ رقمی" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={16} />
-            <input value={editForm.expiryDate} onChange={(e) => setEditForm(f => ({ ...f, expiryDate: e.target.value.slice(0, 10) }))} placeholder="تاریخ انقضا" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" />
+            <input value={editForm.expiryDate} onChange={(e) => setEditForm(f => ({ ...f, expiryDate: fmtExpiry4(e.target.value) }))} placeholder="تاریخ انقضا، مثلا 04/08" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={5} />
           </>}
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={(e) => { e.stopPropagation(); saveEdit(a); }} style={{ ...st.primaryBtn, flex: 1 }}>ذخیره اصلاحات</button>
