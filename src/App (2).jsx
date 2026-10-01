@@ -854,16 +854,139 @@ function useStyles() {
    numeric string (no commas), so nothing downstream needs to change.
 --------------------------------------------------------- */
 function AmountInput({ value, onChange, placeholder, style }) {
-  const digitsOnly = (s) => s.replace(/[۰-۹]/g, (d) => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).replace(/[^0-9]/g, "");
   const display = value ? Number(value).toLocaleString("en-US") : "";
   return (
-    <input
-      value={display}
-      onChange={(e) => onChange(digitsOnly(e.target.value))}
+    <KeypadInput
+      kind="amount"
+      value={value}
+      display={display}
+      onChange={(e) => onChange(String(e.target.value || "").replace(/[^0-9]/g, ""))}
       placeholder={placeholder}
-      inputMode="numeric"
       style={{ ...style, direction: "ltr", textAlign: "right" }}
     />
+  );
+}
+
+/* ---------------------------------------------------------
+   ماشین‌حساب داخل برنامه: به‌جای صفحه‌کلید گوشی، برای ورود اعداد باز می‌شود.
+   kind = "amount" (ماشین‌حساب کامل برای مبلغ) | "digits" (فقط ارقام) | "decimal" (ارقام و اعشار)
+--------------------------------------------------------- */
+const toFaDigits = (x) => String(x).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]).replace(/\./g, "٫");
+function evalCalc(expr) {
+  const tokens = String(expr).match(/\d+\.?\d*|\.\d+|[+\-×÷]/g);
+  if (!tokens) return null;
+  const nums = [], ops = [];
+  let expectNum = true, sign = 1;
+  for (const tk of tokens) {
+    if (/^[+\-×÷]$/.test(tk)) {
+      if (expectNum) { if (tk === "-") sign = -sign; else if (tk !== "+") return null; continue; }
+      ops.push(tk); expectNum = true;
+    } else { nums.push(sign * parseFloat(tk)); sign = 1; expectNum = false; }
+  }
+  if (!nums.length) return null;
+  while (ops.length >= nums.length) ops.pop();
+  const outN = [nums[0]], outO = [];
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i], bb = nums[i + 1];
+    if (op === "×") outN[outN.length - 1] *= bb;
+    else if (op === "÷") { if (bb === 0) return null; outN[outN.length - 1] /= bb; }
+    else { outO.push(op); outN.push(bb); }
+  }
+  let r = outN[0];
+  outO.forEach((op, i) => { r = op === "+" ? r + outN[i + 1] : r - outN[i + 1]; });
+  return Number.isFinite(r) ? r : null;
+}
+function NumKeypadSheet({ title, initial = "", kind = "amount", limit, onDone, onClose }) {
+  const t = useT();
+  const dark = t.card === THEME.dark.card;
+  const calc = kind === "amount";
+  const dot = kind === "amount" || kind === "decimal";
+  const [expr, setExpr] = useState(String(initial || ""));
+  const [fresh, setFresh] = useState(!!initial);
+  const [bad, setBad] = useState(false);
+  useEffect(() => { // دکمه‌ی بازگشت گوشی ابتدا همین ماشین‌حساب را می‌بندد
+    const h = () => onClose();
+    (window.__rexaBack = window.__rexaBack || []).push(h);
+    return () => { window.__rexaBack = (window.__rexaBack || []).filter((x) => x !== h); };
+  }, []);
+  const blue = dark ? "#8fb0ff" : "#2f5fe0";
+  const lastNum = (e) => (e.match(/[0-9.]*$/) || [""])[0];
+  function press(k) {
+    setBad(false);
+    if (k === "C") { setExpr(""); setFresh(false); return; }
+    if (k === "⌫") { setExpr((e) => (fresh ? "" : e.slice(0, -1))); setFresh(false); return; }
+    if (k === "=") { const r = evalCalc(expr); if (r === null) { setBad(true); return; } setExpr(String(Math.round(r * 1e6) / 1e6)); setFresh(true); return; }
+    if (/^[+\-×÷]$/.test(k)) {
+      if (!calc) return;
+      setExpr((e) => { if (!e) return k === "-" ? "-" : e; return /[+\-×÷]$/.test(e) ? e.slice(0, -1) + k : e + k; });
+      setFresh(false); return;
+    }
+    setExpr((e) => {
+      const base = fresh ? "" : e;
+      if (k === ".") { if (!dot || lastNum(base).includes(".")) return base; return base === "" || /[+\-×÷]$/.test(base) ? base + "0." : base + "."; }
+      const add = k === "000" ? (calc && lastNum(base) !== "" && lastNum(base) !== "0" && !lastNum(base).includes(".") ? "000" : "") : k;
+      if (!add) return base;
+      if (!calc && limit && base.length + add.length > limit) return base;
+      if ((calc || kind === "decimal") && lastNum(base) === "0") return base.slice(0, -1) + add; // صفر ابتدایی فقط در اعداد حذف می‌شود، نه در شماره‌ها
+      return base + add;
+    });
+    setFresh(false);
+  }
+  function confirm() {
+    if (calc) {
+      if (!expr) { onDone(""); return; }
+      const r = evalCalc(expr);
+      if (r === null) { setBad(true); return; }
+      onDone(String(Math.max(0, Math.round(r))));
+    } else onDone(expr.replace(/\.$/, ""));
+  }
+  const pretty = calc
+    ? expr.replace(/\d+(\.\d*)?/g, (m) => { const [i, d] = m.split("."); return Number(i).toLocaleString("en-US") + (d !== undefined ? "." + d : ""); })
+    : expr;
+  const hasOp = calc && /\d[+\-×÷]\d/.test(expr.replace(/^-/, ""));
+  const preview = hasOp ? evalCalc(expr) : null;
+  const rows = calc
+    ? [["C", "⌫", "÷", "×"], ["7", "8", "9", "-"], ["4", "5", "6", "+"], ["1", "2", "3", "="], ["000", "0", ".", "OK"]]
+    : [["7", "8", "9"], ["4", "5", "6"], ["1", "2", "3"], [dot ? "." : "C", "0", "⌫"]];
+  const keyStyle = (k) => {
+    const isOp = /^[+\-×÷=]$/.test(k), isFn = k === "C" || k === "⌫";
+    return { height: 54, border: "none", borderRadius: 13, fontSize: k === "OK" ? 15 : 21, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+      background: k === "OK" ? "linear-gradient(160deg, #62a8ff 0%, #2f62f0 100%)" : isOp ? (dark ? "rgba(143,176,255,.18)" : "rgba(47,95,224,.10)") : isFn ? (dark ? "rgba(255,120,120,.16)" : "rgba(214,60,60,.09)") : t.input,
+      color: k === "OK" ? "#fff" : isOp ? blue : isFn ? "#d63c3c" : t.text };
+  };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.42)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center", maxWidth: 480, margin: "0 auto" }}>
+      <div onClick={(e) => e.stopPropagation()} dir="ltr" style={{ width: "100%", background: t.card, borderRadius: "20px 20px 0 0", padding: "14px 14px calc(14px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 -8px 30px rgba(0,0,0,.2)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <button onClick={onClose} aria-label="بستن" style={{ background: "none", border: "none", color: t.sub, padding: 4, cursor: "pointer", display: "flex" }}><X size={22} /></button>
+          <div dir="rtl" style={{ fontSize: 12.5, color: t.sub, fontWeight: 600, maxWidth: "80%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title || "ورود عدد"}</div>
+        </div>
+        <div style={{ background: t.input, borderRadius: 14, padding: "10px 14px", marginBottom: 12, minHeight: 78, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", border: `1.5px solid ${bad ? "#d63c3c" : t.inputBorder}` }}>
+          <div style={{ fontSize: 13, color: bad ? "#d63c3c" : t.sub, minHeight: 18, direction: "ltr" }}>{bad ? "عبارت نامعتبر است" : preview !== null && preview !== undefined ? `= ${toFaDigits(Math.round(preview * 1e6) / 1e6)}` : ""}</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: t.text, direction: "ltr", wordBreak: "break-all", textAlign: "right", lineHeight: 1.3 }}>{toFaDigits((pretty || "0").replace(/-/g, "−"))}</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${rows[0].length}, 1fr)`, gap: 8 }}>
+          {rows.flat().map((k) => (
+            <button key={k} onClick={() => (k === "OK" ? confirm() : press(k))} aria-label={k === "OK" ? "تأیید" : k}
+              style={keyStyle(k)}>{k === "OK" ? "تأیید" : /^[0-9]+$/.test(k) ? toFaDigits(k) : k === "-" ? "−" : k === "." ? "٫" : k}</button>
+          ))}
+        </div>
+        {!calc && <button onClick={confirm} aria-label="تأیید" style={{ ...keyStyle("OK"), width: "100%", marginTop: 8 }}>تأیید</button>}
+      </div>
+    </div>
+  );
+}
+function KeypadInput({ kind = "digits", value, onChange, placeholder, style, maxLength, digitsMax, display, ...rest }) {
+  const [open, setOpen] = useState(false);
+  const raw = value == null ? "" : String(value);
+  const initial = kind === "digits" ? raw.replace(/\D/g, "") : raw;
+  return (
+    <>
+      <input {...rest} readOnly inputMode="none" value={display ?? raw} placeholder={placeholder} style={{ ...style, cursor: "pointer" }}
+        onClick={() => setOpen(true)} onFocus={(e) => { try { e.target.blur(); } catch {} setOpen(true); }} />
+      {open && <NumKeypadSheet title={placeholder} initial={initial} kind={kind} limit={digitsMax ?? maxLength}
+        onClose={() => setOpen(false)} onDone={(v) => { setOpen(false); onChange?.({ target: { value: v } }); }} />}
+    </>
   );
 }
 
@@ -932,42 +1055,24 @@ function VoiceCaptureButton({ onResult, dark }) {
 function BottomNav({ active, setActive, onAdd, hidden = false }) {
   const t = useT();
   const dark = t.card === THEME.dark.card;
-  const BAR_H = 64, HUMP = 22, CW = 118; // ارتفاع نوار، برآمدگی وسط، عرض بخش وسط
-  const leftItems = [
+  // ترتیب از چپ به راست: گزارش‌ها، تراکنش‌ها، (ثبت سریع)، چک‌ها، خانه — آیکن همراه نام، بدون کادر
+  const items = [
     { key: "reports", label: "گزارش‌ها", icon: PieChartIcon },
     { key: "transactions", label: "تراکنش‌ها", icon: Receipt },
-  ];
-  const rightItems = [
+    { key: "__add", label: "ثبت سریع" },
     { key: "checks", label: "چک‌ها", icon: FileSpreadsheet },
     { key: "home", label: "خانه", icon: HomeIcon },
   ];
   if (hidden) return null;
-  const seg = { flex: 1, height: BAR_H, background: t.card, display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 2px" };
   const blue = dark ? "#8fb0ff" : "#2f5fe0";
-  const H = BAR_H + HUMP;
-  const hump = `M0 ${HUMP} C ${CW * 0.2} ${HUMP}, ${CW * 0.28} 0, ${CW / 2} 0 C ${CW * 0.72} 0, ${CW * 0.8} ${HUMP}, ${CW} ${HUMP} L ${CW} ${H} L 0 ${H} Z`;
   return (
-    <div dir="ltr" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 0, width: "min(480px, 100vw)", zIndex: 300 }}>
-      <div style={{ filter: `drop-shadow(0 -4px 12px ${dark ? "rgba(0,0,0,.5)" : "rgba(40,60,120,.17)"})` }}>
-        <div style={{ display: "flex", alignItems: "flex-end" }}>
-          <div style={{ ...seg, borderTopLeftRadius: 26, marginLeft: 0, marginRight: -0.5 }}>
-            {leftItems.map((it) => <NavBtn key={it.key} it={it} active={active} setActive={setActive} />)}
-          </div>
-          <svg width={CW} height={H} viewBox={`0 0 ${CW} ${H}`} style={{ display: "block", flexShrink: 0 }} aria-hidden="true">
-            <path d={hump} fill={t.card} />
-          </svg>
-          <div style={{ ...seg, borderTopRightRadius: 26, marginLeft: -0.5 }}>
-            {rightItems.map((it) => <NavBtn key={it.key} it={it} active={active} setActive={setActive} />)}
-          </div>
-        </div>
-        <div style={{ height: "env(safe-area-inset-bottom, 0px)", background: t.card }} />
-      </div>
-      <button onClick={onAdd} aria-label="بازکردن منوی ثبت سریع" style={{ position: "absolute", top: -23, left: "50%", transform: "translateX(-50%)", background: "none", border: "none", padding: "2px 14px", color: blue, cursor: "pointer", display: "flex" }}>
-        <ChevronUp size={17} strokeWidth={3} />
-      </button>
-      <button onClick={onAdd} aria-label="انتقال بین حساب‌ها" style={{ position: "absolute", top: 5, left: "50%", transform: "translateX(-50%)", width: 64, height: 64, borderRadius: "50%", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(160deg, #62a8ff 0%, #2f62f0 100%)", boxShadow: `0 0 0 6px ${dark ? "rgba(143,176,255,.14)" : "rgba(79,140,255,.16)"}, 0 9px 20px rgba(47,98,240,.45), inset 0 1px 2px rgba(255,255,255,.55)` }}>
-        <Repeat size={30} strokeWidth={2.4} />
-      </button>
+    <div dir="ltr" style={{ position: "fixed", left: 0, right: 0, bottom: 0, maxWidth: 480, margin: "0 auto", zIndex: 300, background: t.bg, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", alignItems: "center", padding: "6px calc(4px + env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) calc(4px + env(safe-area-inset-left, 0px))" }}>
+      {items.map((it) => it.key === "__add" ? (
+        <button key={it.key} onClick={onAdd} aria-label={it.label} style={{ background: "none", border: "none", padding: 0, height: 58, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, color: blue, cursor: "pointer", fontFamily: "inherit" }}>
+          <Repeat size={34} strokeWidth={2.4} />
+          <span style={{ fontSize: 11, fontWeight: 800 }}>{it.label}</span>
+        </button>
+      ) : <NavBtn key={it.key} it={it} active={active} setActive={setActive} />)}
     </div>
   );
 }
@@ -977,8 +1082,8 @@ function NavBtn({ it, active, setActive }) {
   const Icon = it.icon; const isActive = active === it.key;
   const color = isActive ? (dark ? "#8fb0ff" : "#2f5fe0") : (dark ? "#b7c0d6" : "#4a5778");
   return (
-    <button onClick={() => setActive(it.key)} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, color, cursor: "pointer", fontFamily: "inherit", minWidth: 58, padding: "4px 0" }}>
-      <Icon size={24} strokeWidth={2} fill={isActive && it.key === "home" ? "currentColor" : "none"} />
+    <button onClick={() => setActive(it.key)} aria-label={it.label} style={{ background: "none", border: "none", padding: 0, height: 58, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, color, cursor: "pointer", fontFamily: "inherit" }}>
+      <Icon size={30} strokeWidth={2} fill={isActive && it.key === "home" ? "currentColor" : "none"} />
       <span style={{ fontSize: 11, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
     </button>
   );
@@ -1814,6 +1919,8 @@ export default function App() {
     let listener;
     (async () => {
       listener = await CapacitorApp.addListener("backButton", async () => {
+        const topOverlay = (window.__rexaBack || [])[(window.__rexaBack || []).length - 1];
+        if (topOverlay) { topOverlay(); return; }
         if (showAdd) { setShowAdd(false); setPrefillTx(null); return; }
         if (showQuickAdd) { setShowQuickAdd(false); return; }
         if (showCapture) { setShowCapture(false); return; }
@@ -1902,7 +2009,7 @@ export default function App() {
 
   return (
     <ThemeCtx.Provider value={t}>
-      <div dir="rtl" onClick={handleTripleTap} style={{ fontFamily: FONT, background: t.bg, color: t.text, minHeight: "100vh", maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", position: "relative", paddingBottom: "calc(96px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 0 30px rgba(0,0,0,0.08)", zoom: settings.fontScale || 1 }}>
+      <div dir="rtl" onClick={handleTripleTap} style={{ fontFamily: FONT, background: t.bg, color: t.text, minHeight: "100vh", maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", position: "relative", paddingBottom: "calc(100px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 0 30px rgba(0,0,0,0.08)", zoom: settings.fontScale || 1 }}>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
           * { box-sizing: border-box; } html, body, #root { margin: 0; min-height: 100%; width: 100%; } body { overflow-x: hidden; overscroll-behavior-y: none; }
@@ -2650,7 +2757,7 @@ function ReportsView({ categories = [], expenseByCategory, incomeByCategory, tot
           </div>
         </>
       )}
-      {selectedAccount && <div onClick={() => setSelectedAccount(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      {selectedAccount && <div onClick={() => setSelectedAccount(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 310, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
         <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px,100vw)", maxHeight: "88vh", overflowY: "auto", background: "#fff", borderRadius: "18px 18px 0 0", padding: 18, paddingBottom: "calc(24px + env(safe-area-inset-bottom,0px))" }}>
           <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>تراز {selectedAccount.name}</div>
           <div style={{ fontSize: 12, color: "#8a8194", marginBottom: 12 }}>مانده فعلی: {formatMoney(accountBalance(selectedAccount.id), currency, usdRate)}</div>
@@ -2670,7 +2777,7 @@ function ReportsView({ categories = [], expenseByCategory, incomeByCategory, tot
           <button onClick={() => setSelectedAccount(null)} style={{ ...st.primaryBtn, background: "#eee", color: "#333", marginTop: 8 }}>بستن</button>
         </div>
       </div>}
-      {selectedMember && <div onClick={() => setSelectedMember(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      {selectedMember && <div onClick={() => setSelectedMember(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 310, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
         <div onClick={(e)=>e.stopPropagation()} style={{ width:"min(480px,100vw)", maxHeight:"82vh", overflowY:"auto", background:"#fff", borderRadius:"18px 18px 0 0", padding:18 }}>
           <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>ریز هزینه‌های {selectedMember.name}</div>
           <div style={{fontSize:12,color:"#8a8194",marginBottom:12}}>جمع: {formatMoney(selectedMember.amount,currency,usdRate)}</div>
@@ -2894,8 +3001,8 @@ function AccountsManager({ accounts, addAccount, deleteAccount, updateAccount, a
       <input placeholder="نام حساب" value={name} onChange={(e) => setName(e.target.value)} style={st.input} />
       <AmountInput placeholder="موجودی اولیه (ریال)" value={initial} onChange={setInitial} style={st.input} />
       {(type === "bank" || type === "card") && <>
-        <input placeholder="شماره کارت ۱۶ رقمی" value={cardNumber} onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16))} style={st.input} inputMode="numeric" maxLength={16} />
-        <input placeholder="تاریخ انقضا، مثلا 04/08" value={expiryDate} onChange={(e) => setExpiryDate(fmtExpiry4(e.target.value))} style={st.input} inputMode="numeric" maxLength={5} />
+        <KeypadInput kind="digits" digitsMax={16} placeholder="شماره کارت ۱۶ رقمی" value={cardNumber} onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16))} style={st.input} inputMode="numeric" maxLength={16} />
+        <KeypadInput kind="digits" digitsMax={4} placeholder="تاریخ انقضا، مثلا 04/08" value={expiryDate} onChange={(e) => setExpiryDate(fmtExpiry4(e.target.value))} style={st.input} inputMode="numeric" maxLength={5} />
       </>}
       <button onClick={add} style={st.primaryBtn}>افزودن</button>
     </div>
@@ -2912,8 +3019,8 @@ function AccountsManager({ accounts, addAccount, deleteAccount, updateAccount, a
           <input value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} placeholder="نام حساب" style={{ ...st.input, marginBottom: 7 }} />
           <AmountInput value={editForm.initial} onChange={(v) => setEditForm(f => ({ ...f, initial: v }))} placeholder="موجودی اولیه" style={{ ...st.input, marginBottom: 7 }} />
           {(a.type === "bank" || a.type === "card") && <>
-            <input value={editForm.cardNumber} onChange={(e) => setEditForm(f => ({ ...f, cardNumber: e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16) }))} placeholder="شماره کارت ۱۶ رقمی" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={16} />
-            <input value={editForm.expiryDate} onChange={(e) => setEditForm(f => ({ ...f, expiryDate: fmtExpiry4(e.target.value) }))} placeholder="تاریخ انقضا، مثلا 04/08" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={5} />
+            <KeypadInput kind="digits" digitsMax={16} value={editForm.cardNumber} onChange={(e) => setEditForm(f => ({ ...f, cardNumber: e.target.value.replace(/[^0-9۰-۹]/g, "").replace(/[۰-۹]/g, d => "0123456789"["۰۱۲۳۴۵۶۷۸۹".indexOf(d)]).slice(0, 16) }))} placeholder="شماره کارت ۱۶ رقمی" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={16} />
+            <KeypadInput kind="digits" digitsMax={4} value={editForm.expiryDate} onChange={(e) => setEditForm(f => ({ ...f, expiryDate: fmtExpiry4(e.target.value) }))} placeholder="تاریخ انقضا، مثلا 04/08" style={{ ...st.input, marginBottom: 7 }} inputMode="numeric" maxLength={5} />
           </>}
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={(e) => { e.stopPropagation(); saveEdit(a); }} style={{ ...st.primaryBtn, flex: 1 }}>ذخیره اصلاحات</button>
@@ -3135,7 +3242,7 @@ function ChecksManager({ checks, setChecks }) {
         <input placeholder="نام طرف حساب" value={form.payee} onChange={(e) => setForm({ ...form, payee: e.target.value })} style={st.input} />
         <AmountInput placeholder="مبلغ" value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} style={st.input} />
         <label style={st.label}>شناسه صیادی (۱۶ رقم)</label>
-        <input placeholder="شناسه ۱۶ رقمی روی چک" value={form.sayadId}
+        <KeypadInput kind="digits" digitsMax={16} placeholder="شناسه ۱۶ رقمی روی چک" value={form.sayadId}
           onChange={(e) => setForm({ ...form, sayadId: e.target.value.replace(/[^0-9]/g, "").slice(0, 20) })}
           style={{ ...st.input, direction: "ltr", textAlign: "right", borderColor: form.sayadId && form.sayadId.length < 16 ? BRAND.crimson : st.input.border }} inputMode="numeric" maxLength={20} />
         {form.sayadId && form.sayadId.length < 16 && <div style={{ fontSize: 11, color: BRAND.crimson, marginTop: -6, marginBottom: 10 }}>شناسه صیادی باید حداقل ۱۶ رقم باشد ({toFaInt(form.sayadId.length)}/۱۶)</div>}
@@ -3199,7 +3306,7 @@ function LoansManager({ loans, setLoans }) {
         <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>ثبت وام جدید</div>
         <input placeholder="عنوان وام (مثلا وام خودرو)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={st.input} />
         <AmountInput placeholder="مبلغ اصل وام" value={form.principal} onChange={(v) => setForm({ ...form, principal: v })} style={st.input} />
-        <input placeholder="تعداد اقساط" value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value.replace(/[^0-9]/g, "") })} style={st.input} inputMode="numeric" />
+        <KeypadInput kind="digits" placeholder="تعداد اقساط" value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value.replace(/[^0-9]/g, "") })} style={st.input} inputMode="numeric" />
         <AmountInput placeholder="مبلغ هر قسط" value={form.monthlyPayment} onChange={(v) => setForm({ ...form, monthlyPayment: v })} style={st.input} />
         <label style={st.label}>تاریخ شروع</label>
         <JalaliDateInput value={form.startDate} onChange={(v) => setForm({ ...form, startDate: v })} style={st.input} />
@@ -3329,7 +3436,7 @@ function AssetsManager({ assets, setAssets }) {
           <button onClick={() => setForm({ ...form, kind: "stock" })} style={pillStyle(form.kind === "stock")}>بورس</button>
         </div>
         <input placeholder="نماد (مثلا BTC یا فولاد)" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} style={st.input} />
-        <input placeholder="تعداد / مقدار" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} style={st.input} inputMode="decimal" />
+        <KeypadInput kind="decimal" placeholder="تعداد / مقدار" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} style={st.input} inputMode="decimal" />
         <AmountInput placeholder="قیمت خرید (ریال)" value={form.avgPrice} onChange={(v) => setForm({ ...form, avgPrice: v })} style={st.input} />
         <AmountInput placeholder="قیمت فعلی (ریال)" value={form.currentPrice} onChange={(v) => setForm({ ...form, currentPrice: v })} style={st.input} />
         <button onClick={add} style={st.primaryBtn}>افزودن دارایی</button>
@@ -3727,7 +3834,7 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
       <SectionTitle text="یادآوری‌ها و اعلان‌ها" />
       <div style={{ ...st.card, padding: 14, marginBottom: 18 }}>
         <label style={st.label}>هشدار سررسید چک چند روز قبل؟</label>
-        <input value={settings.checkReminderDays} onChange={(e) => setSettings((s) => ({ ...s, checkReminderDays: Number(e.target.value.replace(/[^0-9]/g, "") || 0) }))} style={st.input} inputMode="numeric" />
+        <KeypadInput kind="digits" digitsMax={3} value={settings.checkReminderDays} onChange={(e) => setSettings((s) => ({ ...s, checkReminderDays: Number(e.target.value.replace(/[^0-9]/g, "") || 0) }))} style={st.input} inputMode="numeric" />
         <Row title="اعلان سررسید چک، قبض، قسط و یادآوری‌ها" leftIcon={<BellRing size={16} />} leftColor={BRAND.orange}
           extra={<button onClick={async () => {
             const next = settings.dueNotif === false;
@@ -3767,7 +3874,7 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
       <SectionTitle text="امنیت" />
       <div style={{ ...st.card, padding: 14, marginBottom: 18 }}>
         <div style={{ fontSize: 12.5, color: "#8a8194", marginBottom: 10 }}>اول یک رمز عددی تنظیم کن؛ اثر انگشت به‌عنوان راه سریع‌تر بازکردن، علاوه بر رمز عددی کار می‌کند (رمز عددی همیشه به‌عنوان جایگزین در دسترس می‌ماند).</div>
-        <input placeholder="رمز عددی جدید (خالی = بدون قفل)" value={pinInput} onChange={(e) => setPinInput(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} style={st.input} inputMode="numeric" />
+        <KeypadInput kind="digits" digitsMax={6} placeholder="رمز عددی جدید (خالی = بدون قفل)" value={pinInput} onChange={(e) => setPinInput(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} style={st.input} inputMode="numeric" />
         <button onClick={async () => {
           if (pinInput && pinInput.length < 4) { alert("رمز عددی باید حداقل ۴ رقم باشد."); return; }
           if (!pinInput) { setSettings((s) => ({ ...s, pin: "", pinHash: "", pinSalt: "" })); clearPinLock(); return; }
@@ -4224,7 +4331,7 @@ function AddTransactionSheet({ accounts, categories, favorites, members = [], ev
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 120, maxWidth: 480, margin: "0 auto", paddingBottom: "calc(82px + env(safe-area-inset-bottom, 0px))" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 120, maxWidth: 480, margin: "0 auto", paddingBottom: "calc(80px + env(safe-area-inset-bottom, 0px))" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "18px", padding: "18px 18px 24px", maxHeight: "calc(88vh - 70px)", overflowY: "auto", boxShadow: "0 -8px 30px rgba(0,0,0,.18)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#8a8194" }}><X size={22} /></button>
@@ -4556,5 +4663,5 @@ function SideMenu({ onClose, setSubView, profileName }) {
   const sections=[
     {title:"تنظیمات و برنامه",items:[["ویرایش اطلاعات کاربری","profile"],["پشتیبان‌گیری","backup"],["مدیریت دسترسی","access"],["تنظیمات پایه","basic"],["تنظیمات و امنیت","settings"],["آموزش","tutorial"],["ارسال برنامه به دیگران","share"],["امتیاز به برنامه","rate"],["درباره","about"]]}
   ];
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.42)",zIndex:300,maxWidth:480,margin:"0 auto"}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:0,bottom:0,left:0,width:"86%",maxWidth:390,background:"#fff",boxShadow:"3px 0 18px rgba(0,0,0,.22)",overflowY:"auto",paddingTop:"env(safe-area-inset-top,0px)",paddingBottom:"calc(28px + env(safe-area-inset-bottom,0px))"}}><div style={{background:BRAND.header,color:"#fff",padding:"16px",position:"sticky",top:0,zIndex:2}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><RexaLogo size={42}/><div><div style={{fontWeight:800,fontSize:15}}>{profileName||"کاربر Rexa"}</div><div style={{fontSize:11,color:"#d8c9e8",marginTop:3}}>Rexa · نسخه ۵.۱.۲</div></div></div><button onClick={onClose} style={{background:"rgba(255,255,255,.12)",border:0,borderRadius:9,color:"#fff",width:36,height:36}}><X size={21}/></button></div></div><div style={{padding:"8px 14px 0"}}>{sections.map(sec=><div key={sec.title}><div style={{fontSize:11,fontWeight:800,color:BRAND.violet,padding:"13px 6px 7px"}}>{sec.title}</div><div style={{border:"1px solid #eeeaf2",borderRadius:12,overflow:"hidden",marginBottom:6}}>{sec.items.map(([label,key],i)=><div key={key} onClick={()=>setSubView(key)} style={{padding:"12px 10px",borderBottom:i===sec.items.length-1?"none":"1px solid #f0eef3",fontSize:13.5,fontWeight:600,color:"#241a30",background:"#fff"}}>{label}</div>)}</div></div>)}<div style={{textAlign:"center",color:"#918899",fontSize:10.5,padding:"14px 0 10px"}}>Rexa Personal Finance · نسخه ۵.۱.۲ · Android</div></div></div></div>;
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.42)",zIndex:310,maxWidth:480,margin:"0 auto"}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:0,bottom:0,left:0,width:"86%",maxWidth:390,background:"#fff",boxShadow:"3px 0 18px rgba(0,0,0,.22)",overflowY:"auto",paddingTop:"env(safe-area-inset-top,0px)",paddingBottom:"calc(28px + env(safe-area-inset-bottom,0px))"}}><div style={{background:BRAND.header,color:"#fff",padding:"16px",position:"sticky",top:0,zIndex:2}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><RexaLogo size={42}/><div><div style={{fontWeight:800,fontSize:15}}>{profileName||"کاربر Rexa"}</div><div style={{fontSize:11,color:"#d8c9e8",marginTop:3}}>Rexa · نسخه ۵.۱.۲</div></div></div><button onClick={onClose} style={{background:"rgba(255,255,255,.12)",border:0,borderRadius:9,color:"#fff",width:36,height:36}}><X size={21}/></button></div></div><div style={{padding:"8px 14px 0"}}>{sections.map(sec=><div key={sec.title}><div style={{fontSize:11,fontWeight:800,color:BRAND.violet,padding:"13px 6px 7px"}}>{sec.title}</div><div style={{border:"1px solid #eeeaf2",borderRadius:12,overflow:"hidden",marginBottom:6}}>{sec.items.map(([label,key],i)=><div key={key} onClick={()=>setSubView(key)} style={{padding:"12px 10px",borderBottom:i===sec.items.length-1?"none":"1px solid #f0eef3",fontSize:13.5,fontWeight:600,color:"#241a30",background:"#fff"}}>{label}</div>)}</div></div>)}<div style={{textAlign:"center",color:"#918899",fontSize:10.5,padding:"14px 0 10px"}}>Rexa Personal Finance · نسخه ۵.۱.۲ · Android</div></div></div></div>;
 }
