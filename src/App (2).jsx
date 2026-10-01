@@ -23,6 +23,7 @@ import { Share } from "@capacitor/share";
 import { BiometricAuth } from "@aparajita/capacitor-biometric-auth";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
 import { TextToSpeech } from "@capacitor-community/text-to-speech";
+import { LocalNotifications } from "@capacitor/local-notifications";
 
 /* ---------------------------------------------------------
    Helpers
@@ -234,7 +235,7 @@ const DEFAULT_HOME_SECTIONS = [
   { key: "budget", visible: true }, { key: "loanchk", visible: true }, { key: "contacts", visible: true }, { key: "bills", visible: true },
 ];
 const seedSettings = () => ({
-  theme: "light", pin: "", sharedFamily: false, themeColor: "purple",
+  theme: "light", pin: "", pinHash: "", pinSalt: "", dueNotif: true, sharedFamily: false, themeColor: "purple",
   profile: { name: "alireza shadfar", phone: "", email: "" },
   homeLayout: "cards", homeSections: DEFAULT_HOME_SECTIONS,
   fontScale: 1, calendarMode: "jalali", currency: "rial",
@@ -952,12 +953,127 @@ function NavBtn({ it, active, setActive }) {
 /* ---------------------------------------------------------
    Lock screen
 --------------------------------------------------------- */
-function LockScreen({ pin, onUnlock, biometricEnabled }) {
+/* ---------------------------------------------------------
+   امنیت رمز عددی: رمز هرگز به‌صورت متن ساده ذخیره نمی‌شود (هش + salt)،
+   داخل فایل پشتیبان نمی‌رود و بعد از چند تلاش اشتباه موقتاً قفل می‌شود.
+--------------------------------------------------------- */
+const PIN_LOCK_KEY = "rexa:pinLock";
+const PIN_FREE_TRIES = 5;
+const withoutPin = (st = {}) => { const { pin, pinHash, pinSalt, ...rest } = st; return rest; };
+const hexOf = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+async function derivePinHash(pin, salt, scheme) {
+  if (scheme === "p1") {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(pin), "PBKDF2", false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: enc.encode(salt), iterations: 120000, hash: "SHA-256" }, key, 256);
+    return hexOf(bits);
+  }
+  // روش جایگزین وقتی crypto.subtle در دسترس نباشد
+  const str = `${salt}:${pin}`;
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let r = 0; r < 3000; r++) for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+}
+async function makePinRecord(pin) {
+  let salt = "";
+  try { salt = hexOf(crypto.getRandomValues(new Uint8Array(16))); } catch { salt = Math.random().toString(16).slice(2) + Date.now().toString(16); }
+  let scheme = typeof crypto !== "undefined" && crypto.subtle ? "p1" : "f1";
+  let hash;
+  try { hash = await derivePinHash(String(pin), salt, scheme); } catch { scheme = "f1"; hash = await derivePinHash(String(pin), salt, scheme); }
+  return { pinHash: `${scheme}:${hash}`, pinSalt: salt };
+}
+async function verifyPin(input, { pin, pinHash, pinSalt }) {
+  try {
+    if (pinHash) {
+      const [scheme, hash] = String(pinHash).split(":");
+      return (await derivePinHash(String(input), pinSalt || "", scheme)) === hash;
+    }
+    if (pin) return String(input) === String(pin); // رمز قدیمی؛ بلافاصله بعد از ورود به هش تبدیل می‌شود
+  } catch {}
+  return false;
+}
+function readPinLock() {
+  try { const v = JSON.parse(localStorage.getItem(PIN_LOCK_KEY) || "null"); return { fails: Number(v?.fails) || 0, until: Number(v?.until) || 0 }; } catch { return { fails: 0, until: 0 }; }
+}
+function clearPinLock() { try { localStorage.removeItem(PIN_LOCK_KEY); } catch {} }
+function registerPinFail() {
+  const fails = readPinLock().fails + 1;
+  const until = fails >= PIN_FREE_TRIES ? Date.now() + Math.min(15 * 60, 30 * 2 ** (fails - PIN_FREE_TRIES)) * 1000 : 0;
+  const next = { fails, until };
+  try { localStorage.setItem(PIN_LOCK_KEY, JSON.stringify(next)); } catch {}
+  return next;
+}
+
+/* ---------------------------------------------------------
+   اعلان‌های واقعی سررسید (Android): چک، قبض، قسط وام و یادآوری‌ها
+   ساعت ۹ صبح همان روز (و برای چک/قبض، قبل از سررسید) نمایش داده می‌شوند.
+--------------------------------------------------------- */
+const DUE_NOTIF_BASE = 710000000;
+const DUE_NOTIF_MAX = 60;
+function atNine(dateStr, daysBefore = 0) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ""));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3] - daysBefore, 9, 0, 0) : null;
+}
+async function rescheduleDueNotifications({ enabled, checks, bills, loans, reminders, checkDays }) {
+  const pending = await LocalNotifications.getPending();
+  const mine = (pending.notifications || []).filter((n) => n.id >= DUE_NOTIF_BASE && n.id < DUE_NOTIF_BASE + 1000);
+  if (mine.length) await LocalNotifications.cancel({ notifications: mine.map((n) => ({ id: n.id })) });
+  if (!enabled) return;
+  const items = [];
+  const push = (when, title, body) => {
+    if (!when || isNaN(when.getTime())) return;
+    const t = when.getTime();
+    if (t > Date.now() + 10000 && t < Date.now() + 120 * 86400000) items.push({ when, title, body });
+  };
+  (checks || []).filter((c) => c.status === "pending" && c.dueDate).forEach((c) => {
+    const what = `چک ${c.type === "received" ? "دریافتی" : "پرداختی"} ${c.payee || ""} — ${toFaInt(c.amount)} ریال`;
+    if (checkDays > 0) push(atNine(c.dueDate, checkDays), "یادآوری سررسید چک", `${what} — ${toFaInt(checkDays)} روز دیگر سررسید می‌شود`);
+    push(atNine(c.dueDate, 0), "امروز سررسید چک است", what);
+  });
+  (bills || []).filter((b) => !b.paid && b.dueDate).forEach((b) => {
+    const what = `قبض ${b.title || ""}${b.amount ? ` — ${toFaInt(b.amount)} ریال` : ""}`;
+    push(atNine(b.dueDate, 1), "یادآوری سررسید قبض", `${what} — فردا سررسید است`);
+    push(atNine(b.dueDate, 0), "امروز سررسید قبض است", what);
+  });
+  (loans || []).filter((l) => l.startDate && l.paidCount < l.installments).forEach((l) => {
+    const due = addMonths(l.startDate, l.paidCount);
+    const what = `قسط ${l.title || "وام"}${l.monthlyPayment ? ` — ${toFaInt(l.monthlyPayment)} ریال` : ""}`;
+    push(atNine(due, 1), "یادآوری سررسید قسط", `${what} — فردا سررسید است`);
+    push(atNine(due, 0), "امروز سررسید قسط است", what);
+  });
+  (reminders || []).filter((r) => !r.done && r.date).forEach((r) => push(atNine(r.date, 0), "یادآوری Rexa", r.text || ""));
+  const list = items.sort((a, b) => a.when - b.when).slice(0, DUE_NOTIF_MAX);
+  if (!list.length) return;
+  let perm = await LocalNotifications.checkPermissions();
+  if (perm.display === "prompt" || perm.display === "prompt-with-rationale") perm = await LocalNotifications.requestPermissions();
+  if (perm.display !== "granted") return;
+  try { await LocalNotifications.createChannel({ id: "rexa-due", name: "سررسیدها و یادآوری‌ها", description: "چک، قبض، قسط و یادآوری‌ها", importance: 4, visibility: 1 }); } catch {}
+  await LocalNotifications.schedule({
+    notifications: list.map((it, i) => ({ id: DUE_NOTIF_BASE + i, title: it.title, body: it.body, schedule: { at: it.when }, channelId: "rexa-due" })),
+  });
+}
+
+function LockScreen({ pin, pinHash, pinSalt, onUnlock, biometricEnabled }) {
   const [val, setVal] = useState("");
   const [err, setErr] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioChecked, setBioChecked] = useState(false);
   const isNative = typeof Capacitor !== "undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
+  const [now, setNow] = useState(Date.now());
+  const [lock, setLock] = useState(() => readPinLock());
+  const remaining = Math.max(0, Math.ceil(((lock.until || 0) - now) / 1000));
+  useEffect(() => {
+    if (!remaining) return;
+    const tm = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(tm);
+  }, [remaining > 0]);
+  async function submitPin() {
+    if (remaining > 0 || !val) return;
+    if (await verifyPin(val, { pin, pinHash, pinSalt })) { clearPinLock(); onUnlock(); return; }
+    setLock(registerPinFail()); setNow(Date.now()); setErr(true); setVal("");
+  }
 
   async function tryBiometric() {
     if (!biometricEnabled || !isNative) { setBioChecked(true); return; }
@@ -996,9 +1112,11 @@ function LockScreen({ pin, onUnlock, biometricEnabled }) {
         placeholder="رمز عبور"
         style={{ width: 180, textAlign: "center", fontSize: 22, letterSpacing: 6, padding: "10px", borderRadius: 10, border: "none", outline: "none" }}
       />
-      {err && <div style={{ color: "#ffb3c1", fontSize: 13 }}>رمز اشتباه است</div>}
-      <button onClick={() => (val === pin ? onUnlock() : setErr(true))}
-        style={{ background: BRAND.fab, color: "#fff", border: "none", borderRadius: 9, padding: "10px 30px", fontWeight: 700, cursor: "pointer" }}>
+      {remaining > 0
+        ? <div style={{ color: "#ffb3c1", fontSize: 13, textAlign: "center", maxWidth: 260 }}>تلاش ناموفق زیاد بود. {toFaInt(remaining)} ثانیه دیگر دوباره تلاش کنید.</div>
+        : err && <div style={{ color: "#ffb3c1", fontSize: 13 }}>رمز اشتباه است</div>}
+      <button onClick={submitPin} disabled={remaining > 0}
+        style={{ background: BRAND.fab, color: "#fff", border: "none", borderRadius: 9, padding: "10px 30px", fontWeight: 700, cursor: "pointer", opacity: remaining > 0 ? 0.5 : 1 }}>
         باز کردن
       </button>
       {biometricEnabled && !isNative && bioChecked && (
@@ -1447,6 +1565,24 @@ export default function App() {
     // eslint-disable-next-line
   }, [loaded]);
 
+  // تبدیل رمز قدیمی (متن ساده) به هش
+  useEffect(() => {
+    if (!loaded || !settings.pin || settings.pinHash) return;
+    (async () => {
+      const rec = await makePinRecord(String(settings.pin));
+      setSettings((s) => (s.pin ? { ...s, pin: "", ...rec } : s));
+    })();
+  }, [loaded, settings.pin, settings.pinHash]);
+
+  // اعلان‌های واقعی سررسید چک/قبض/قسط و یادآوری‌ها (فقط در APK)
+  useEffect(() => {
+    if (!loaded || dailySplash || !Capacitor.isNativePlatform()) return;
+    const tm = setTimeout(() => {
+      rescheduleDueNotifications({ enabled: settings.dueNotif !== false, checks, bills, loans, reminders, checkDays: Number(settings.checkReminderDays) || 0 }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(tm);
+  }, [loaded, dailySplash, checks, bills, loans, reminders, settings.dueNotif, settings.checkReminderDays]);
+
   const toggle = (key) => setOpen((o) => ({ ...o, [key]: !o[key] }));
   const catById = useCallback((id) => categories.find((c) => c.id === id), [categories]);
   const accById = useCallback((id) => accounts.find((a) => a.id === id), [accounts]);
@@ -1572,7 +1708,7 @@ export default function App() {
     if (manual > 0 && rates?.source === "manual") setRates((r) => ({ ...r, usd: manual }));
   }, [settings.manualUsdRate, loaded]);
 
-  const backupState = { backupVersion: 2, exportedAt: new Date().toISOString(), accounts, categories, transactions, budgets, loans, checks, bills, assets, recurring, favorites, settings, shortcuts, members, events, projects, fiscalPeriods, notes, reminders, persons, debts, currencies, goals };
+  const backupState = { backupVersion: 2, exportedAt: new Date().toISOString(), accounts, categories, transactions, budgets, loans, checks, bills, assets, recurring, favorites, settings: withoutPin(settings), shortcuts, members, events, projects, fiscalPeriods, notes, reminders, persons, debts, currencies, goals };
   async function exportBackup() {
     const filename = `rexa-backup-${todayISO()}.json`;
     const json = JSON.stringify(backupState, null, 2);
@@ -1613,7 +1749,7 @@ export default function App() {
         if (data.currencies) setCurrencies(data.currencies);
         if (data.goals) setGoals(data.goals);
         if (data.shortcuts) setShortcuts(data.shortcuts);
-        if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
+        if (data.settings) setSettings((s) => ({ ...s, ...withoutPin(data.settings) }));
         alert("بازیابی اطلاعات با موفقیت انجام شد");
       } catch { alert("فایل پشتیبان نامعتبر است"); }
     };
@@ -1679,8 +1815,8 @@ export default function App() {
       </div>
     );
   }
-  if ((settings.pin || settings.biometricEnabled) && !unlocked) {
-    return <LockScreen pin={settings.pin} onUnlock={() => setUnlocked(true)} biometricEnabled={settings.biometricEnabled} />;
+  if ((settings.pinHash || settings.pin || settings.biometricEnabled) && !unlocked) {
+    return <LockScreen pin={settings.pin} pinHash={settings.pinHash} pinSalt={settings.pinSalt} onUnlock={() => setUnlocked(true)} biometricEnabled={settings.biometricEnabled} />;
   }
 
   function openWithPrefill(data) {
@@ -3524,6 +3660,19 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
       <div style={{ ...st.card, padding: 14, marginBottom: 18 }}>
         <label style={st.label}>هشدار سررسید چک چند روز قبل؟</label>
         <input value={settings.checkReminderDays} onChange={(e) => setSettings((s) => ({ ...s, checkReminderDays: Number(e.target.value.replace(/[^0-9]/g, "") || 0) }))} style={st.input} inputMode="numeric" />
+        <Row title="اعلان سررسید چک، قبض، قسط و یادآوری‌ها" leftIcon={<BellRing size={16} />} leftColor={BRAND.orange}
+          extra={<button onClick={async () => {
+            const next = settings.dueNotif === false;
+            if (next && Capacitor.isNativePlatform()) {
+              try {
+                let p = await LocalNotifications.checkPermissions();
+                if (p.display !== "granted") p = await LocalNotifications.requestPermissions();
+                if (p.display !== "granted") { alert("اجازه‌ی اعلان داده نشد. از تنظیمات گوشی > برنامه‌ها > Rexa > اعلان‌ها آن را فعال کنید."); return; }
+              } catch {}
+            }
+            setSettings((s) => ({ ...s, dueNotif: next }));
+          }} style={{ background: settings.dueNotif !== false ? BRAND.green : "#aaa", color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{settings.dueNotif !== false ? "فعال" : "غیرفعال"}</button>}
+          chevron={null} />
         <Row title="اعلان تشخیص پیامک بانکی" leftIcon={<Bell size={16} />} leftColor={BRAND.orange}
           extra={<button onClick={() => setSettings((s) => ({ ...s, smsNotif: !s.smsNotif }))} style={{ background: settings.smsNotif ? BRAND.green : "#aaa", color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{settings.smsNotif ? "فعال" : "غیرفعال"}</button>}
           chevron={null} />
@@ -3551,10 +3700,17 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
       <div style={{ ...st.card, padding: 14, marginBottom: 18 }}>
         <div style={{ fontSize: 12.5, color: "#8a8194", marginBottom: 10 }}>اول یک رمز عددی تنظیم کن؛ اثر انگشت به‌عنوان راه سریع‌تر بازکردن، علاوه بر رمز عددی کار می‌کند (رمز عددی همیشه به‌عنوان جایگزین در دسترس می‌ماند).</div>
         <input placeholder="رمز عددی جدید (خالی = بدون قفل)" value={pinInput} onChange={(e) => setPinInput(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} style={st.input} inputMode="numeric" />
-        <button onClick={() => setSettings((s) => ({ ...s, pin: pinInput }))} style={{ ...st.primaryBtn, marginBottom: 14 }}>{pinInput ? "تنظیم رمز" : "حذف رمز"}</button>
+        <button onClick={async () => {
+          if (pinInput && pinInput.length < 4) { alert("رمز عددی باید حداقل ۴ رقم باشد."); return; }
+          if (!pinInput) { setSettings((s) => ({ ...s, pin: "", pinHash: "", pinSalt: "" })); clearPinLock(); return; }
+          const rec = await makePinRecord(pinInput);
+          setSettings((s) => ({ ...s, pin: "", ...rec }));
+          clearPinLock(); setPinInput("");
+          alert("رمز عددی تنظیم شد.");
+        }} style={{ ...st.primaryBtn, marginBottom: 14 }}>{pinInput ? "تنظیم رمز" : "حذف رمز"}</button>
         <Row title="باز کردن با اثر انگشت" leftIcon={<Fingerprint size={16} />} leftColor={BRAND.violet}
           extra={<button onClick={() => {
-            if (!settings.biometricEnabled && !settings.pin) { alert("ابتدا یک رمز عددی تنظیم کنید تا قفل امن Rexa فعال شود."); return; }
+            if (!settings.biometricEnabled && !(settings.pinHash || settings.pin)) { alert("ابتدا یک رمز عددی تنظیم کنید تا قفل امن Rexa فعال شود."); return; }
             setSettings((s) => ({ ...s, biometricEnabled: !s.biometricEnabled }));
           }} style={{ background: settings.biometricEnabled ? BRAND.green : "#aaa", color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{settings.biometricEnabled ? "فعال" : "غیرفعال"}</button>}
           chevron={null} />
