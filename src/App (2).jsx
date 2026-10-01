@@ -230,10 +230,18 @@ const seedCategories = () => {
   ];
 };
 const DEFAULT_HOME_SECTIONS = [
-  { key: "shortcut", visible: true }, { key: "expense", visible: true }, { key: "income", visible: true },
+  { key: "shortcut", visible: true }, { key: "operations", visible: true }, { key: "expense", visible: true }, { key: "income", visible: true },
   { key: "banks", visible: true }, { key: "funds", visible: true }, { key: "balrep", visible: true },
-  { key: "budget", visible: true }, { key: "loanchk", visible: true }, { key: "contacts", visible: true }, { key: "bills", visible: true },
+  { key: "budget", visible: true }, { key: "loanchk", visible: true }, { key: "bills", visible: true },
 ];
+// برای کاربرانی که چیدمان قدیمی ذخیره دارند: بخش «عملیات» اضافه و بخش حذف‌شده‌ی «اشخاص و بدهی‌ها» کنار گذاشته می‌شود
+const normalizeHomeSections = (list) => {
+  const base = (Array.isArray(list) && list.length ? list : DEFAULT_HOME_SECTIONS).filter((x) => x.key !== "contacts");
+  if (base.some((x) => x.key === "operations")) return base;
+  const out = [...base];
+  out.splice(out.findIndex((x) => x.key === "shortcut") + 1, 0, { key: "operations", visible: true });
+  return out;
+};
 const seedSettings = () => ({
   theme: "light", pin: "", pinHash: "", pinSalt: "", dueNotif: true, sharedFamily: false, themeColor: "purple",
   profile: { name: "alireza shadfar", phone: "", email: "" },
@@ -1899,7 +1907,7 @@ export default function App() {
                 bills={bills} loans={loans} checks={checks} assets={assets} totalAssets={totalAssets} persons={persons} debts={debts}
                 openAccounts={() => { setAccountEditTarget(null); setSubView("accounts"); }} onEditAccount={(a) => { setAccountEditTarget(a); setSubView("accounts"); }} openBudgets={() => setSubView("budgets")}
                 openBills={() => setSubView("bills")} openLoans={() => setSubView("loans")} openPersons={() => setSubView("persons")} openDebts={() => setSubView("debts")}
-                openChecks={() => setSubView("checks")} openAssets={() => setSubView("assets")}
+                openChecks={() => setSubView("checks")} openAssets={() => setSubView("assets")} openSubView={(k) => setSubView(k)}
                 homeDay={homeDay} setHomeDay={setHomeDay} catById={catById}
                 settings={settings} setSettings={setSettings} rates={rates} fetchRates={fetchRates}
                 onNote={() => setShowNoteModal(true)} onReminder={() => setShowReminderModal(true)}
@@ -2002,7 +2010,7 @@ function HomeView({
   year, setYear, totalIncomeYear, totalExpenseYear, gaugeMax, open, toggle,
   accounts, accountBalance, expenseByCategory, incomeByCategory, budgets, categories,
   transactions, allTransactions, bills, loans, checks, assets, totalAssets, persons = [], debts = [],
-  openAccounts, onEditAccount, openBudgets, openBills, openLoans, openChecks, openAssets, openPersons, openDebts,
+  openAccounts, onEditAccount, openBudgets, openBills, openLoans, openChecks, openAssets, openPersons, openDebts, openSubView,
   homeDay, setHomeDay, catById, settings, setSettings, rates, fetchRates, onNote, onReminder, onAddTransaction, shortcuts = [], onRunShortcut, openShortcuts, onOpenTransactions
 }) {
   const t = useT();
@@ -2014,10 +2022,11 @@ function HomeView({
   const upcomingChecks = checks.filter((c) => c.status === "pending" && daysUntil(c.dueDate) <= (settings.checkReminderDays || 7)).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const currency = settings.currency, usdRate = rates?.usd;
   const layout = settings.homeLayout || "cards";
-  const sectionOrder = (settings.homeSections && settings.homeSections.length ? settings.homeSections : DEFAULT_HOME_SECTIONS).filter((s) => s.visible);
+  const sectionOrder = normalizeHomeSections(settings.homeSections).filter((s) => s.visible);
 
   const SECTION_META = {
     shortcut: { color: BRAND.mauve, title: "میانبر تراکنش ها", icon: <ArrowLeftRight size={20} /> },
+    operations: { color: BRAND.header, title: "عملیات", icon: <Grid3x3 size={20} /> },
     expense: { color: BRAND.header, title: "هزینه ها", icon: <TrendingDown size={20} /> },
     income: { color: BRAND.darkgreen, title: "درآمدها", icon: <TrendingUp size={20} /> },
     banks: { color: BRAND.violet, title: "بانک ها و کارت ها", icon: <Landmark size={20} /> },
@@ -2038,6 +2047,40 @@ function HomeView({
             <AddShortcutTile onClick={openShortcuts || (() => {})} />
           </div>
         );
+      case "operations": {
+        const groups = [
+          { title: "حسابداری و مدیریت", items: [
+            { key: "coa", title: "حساب‌ها", icon: <Grid3x3 size={17} />, color: BRAND.header },
+            { key: "goals", title: "اهداف مالی و پس‌انداز", icon: <Target size={17} />, color: BRAND.green },
+            { key: "accounts", title: "حساب‌ها و کارت‌ها", icon: <Landmark size={17} />, color: BRAND.violet },
+            { key: "categories", title: "دسته‌بندی‌ها و برچسب‌ها", icon: <Tag size={17} />, color: BRAND.mauve },
+            { key: "budgets", title: "بودجه‌بندی", icon: <Save size={17} />, color: BRAND.green },
+            { key: "recurring", title: "تراکنش‌های تکرارشونده", icon: <Repeat size={17} />, color: BRAND.teal },
+            { key: "checks", title: "چک‌ها", icon: <FileSpreadsheet size={17} />, color: BRAND.gold },
+            { key: "loans", title: "وام و اقساط", icon: <Bank size={17} />, color: BRAND.crimson },
+            { key: "assets", title: "دارایی‌ها", icon: <Bitcoin size={17} />, color: "#7a5cff" },
+            { key: "currencies", title: "واحدهای پولی", icon: <DollarSign size={17} />, color: BRAND.gold },
+            { key: "bills", title: "یادآوری قبض‌ها", icon: <BellRing size={17} />, color: BRAND.orange },
+            { key: "tags", title: "اعضای منزل، رویداد و پروژه", icon: <Users size={17} />, color: BRAND.violet },
+            { key: "periods", title: "دوره مالی", icon: <CalendarDays size={17} />, color: BRAND.darkgreen },
+            { key: "calendar", title: "تقویم شمسی", icon: <CalendarDays size={17} />, color: BRAND.header },
+          ] },
+          { title: "ابزارها", items: [
+            { key: "shortcuts", title: "میانبرهای تراکنش", icon: <ArrowLeftRight size={17} />, color: BRAND.mauve },
+            { key: "sms", title: "پیامک بانکی", icon: <BellRing size={17} />, color: "#666" },
+            { key: "calculator", title: "ماشین حساب", icon: <Type size={17} />, color: BRAND.teal },
+            { key: "support", title: "پشتیبانی و تیکت", icon: <Bell size={17} />, color: BRAND.header },
+          ] },
+        ];
+        return (<>
+          {groups.map((g) => (
+            <div key={g.title}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: BRAND.violet, padding: "10px 4px 2px" }}>{g.title}</div>
+              {g.items.map((it) => <Row key={it.key} title={it.title} leftIcon={it.icon} leftColor={it.color} onClick={() => openSubView?.(it.key)} />)}
+            </div>
+          ))}
+        </>);
+      }
       case "expense":
         return expenseByCategory.length === 0 ? <EmptyRow text="هزینه‌ای ثبت نشده" /> : expenseByCategory.map((e) => <Row key={e.catId} title={e.name} value={formatMoney(e.amount, currency, usdRate)} valueColor={BRAND.crimson} />);
       case "income":
@@ -2385,8 +2428,6 @@ function OperationsView({ setSubView, onAdd }) {
   const st = useStyles();
   const items = [
     { title: "اهداف مالی و پس‌انداز", icon: <Target size={17} />, color: BRAND.green, key: "goals" },
-    { title: "اشخاص و طرف حساب‌ها", icon: <Users size={17} />, color: BRAND.violet, key: "persons" },
-    { title: "بدهکاران و بستانکاران", icon: <Receipt size={17} />, color: BRAND.crimson, key: "debts" },
     { title: "واحدهای پولی", icon: <DollarSign size={17} />, color: BRAND.gold, key: "currencies" },
     { title: "ماشین حساب", icon: <Type size={17} />, color: BRAND.teal, key: "calculator" },
     { title: "پشتیبانی و تیکت", icon: <Bell size={17} />, color: BRAND.header, key: "support" },
@@ -2620,11 +2661,12 @@ function ReportsView({ categories = [], expenseByCategory, incomeByCategory, tot
 /* ---------------------------------------------------------
    SubView Router
 --------------------------------------------------------- */
-const SUBVIEW_TITLES = { goals: "اهداف مالی و پس‌انداز", persons: "اشخاص و طرف حساب‌ها", debts: "بدهکاران و بستانکاران", currencies: "واحدهای پولی", calculator: "ماشین حساب", support: "پشتیبانی", shortcuts: "میانبرهای تراکنش", accounts: "حساب‌ها و کارت‌ها", categories: "حسابها", budgets: "بودجه‌بندی", recurring: "تراکنش‌های تکرارشونده", checks: "چک‌ها", loans: "وام و اقساط", bills: "یادآوری قبض‌ها", assets: "دارایی‌ها", calendar: "تقویم شمسی", settings: "تنظیمات و امنیت", profile: "ویرایش اطلاعات کاربری", backup: "پشتیبان‌گیری و بازیابی", access: "مدیریت دسترسی", basic: "تنظیمات پایه", tutorial: "آموزش Rexa", share: "ارسال برنامه به دیگران", rate: "امتیاز به برنامه", about: "درباره Rexa", tags: "اعضا، رویداد و پروژه", periods: "دوره مالی", sms: "پیامک بانکی" };
+const SUBVIEW_TITLES = { coa: "حساب‌ها", goals: "اهداف مالی و پس‌انداز", persons: "اشخاص و طرف حساب‌ها", debts: "بدهکاران و بستانکاران", currencies: "واحدهای پولی", calculator: "ماشین حساب", support: "پشتیبانی", shortcuts: "میانبرهای تراکنش", accounts: "حساب‌ها و کارت‌ها", categories: "حسابها", budgets: "بودجه‌بندی", recurring: "تراکنش‌های تکرارشونده", checks: "چک‌ها", loans: "وام و اقساط", bills: "یادآوری قبض‌ها", assets: "دارایی‌ها", calendar: "تقویم شمسی", settings: "تنظیمات و امنیت", profile: "ویرایش اطلاعات کاربری", backup: "پشتیبان‌گیری و بازیابی", access: "مدیریت دسترسی", basic: "تنظیمات پایه", tutorial: "آموزش Rexa", share: "ارسال برنامه به دیگران", rate: "امتیاز به برنامه", about: "درباره Rexa", tags: "اعضا، رویداد و پروژه", periods: "دوره مالی", sms: "پیامک بانکی" };
 function SubViewContent({ subView, ctx, onBack }) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px 112px", paddingTop: "calc(20px + env(safe-area-inset-top, 0px))" }}>
       {subView === "goals" && <GoalsManager {...ctx} />}
+      {subView === "coa" && <AccountsTree {...ctx} />}
       {subView === "persons" && <PersonsManager {...ctx} />}
       {subView === "debts" && <DebtsManager {...ctx} />}
       {subView === "currencies" && <CurrenciesManager {...ctx} />}
@@ -2869,7 +2911,7 @@ function CategoriesManager({ categories, addCategory, deleteCategory, updateCate
     { kind: "fund", label: "صندوق‌ها" }, { kind: "bank", label: "بانک‌ها و کارت‌ها" },
     { kind: "asset", label: "دارائی‌ها" }, { kind: "liability", label: "بدهی‌ها" },
     { kind: "person", label: "اشخاص" }, { kind: "receivable", label: "بدهکاران" },
-    { kind: "payable", label: "بستانکاران" }, { kind: "other", label: "غیره" },
+    { kind: "payable", label: "بستانکاران" }, { kind: "capital", label: "سرمایه" }, { kind: "other", label: "غیره" },
   ];
 
   function addSub(parentId, parentKind) {
@@ -3749,7 +3791,7 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
       <SectionTitle text="شخصی‌سازی نمای صفحه اول" />
       <div style={{ ...st.card, padding: "8px 12px", marginBottom: 18 }}>
         <div style={{ fontSize: 11.5, color: "#8a8194", padding: "6px 4px 10px" }}>هر بخش را می‌توانید نمایش/مخفی کنید یا با فلش‌ها ترتیبش را عوض کنید.</div>
-        {(settings.homeSections || DEFAULT_HOME_SECTIONS).map((sec, i, arr) => {
+        {normalizeHomeSections(settings.homeSections).map((sec, i, arr) => {
           const meta = HOME_SECTION_LABELS[sec.key] || sec.key;
           function move(dir) {
             const idx = i + dir;
@@ -3800,7 +3842,7 @@ function SettingsView({ settings, setSettings, exportBackup, importBackup, rebui
 }
 const miniBtn = { width: 26, height: 26, borderRadius: 7, border: "none", background: "#eee", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" };
 const HOME_SECTION_LABELS = {
-  shortcut: "میانبر تراکنش‌ها", expense: "هزینه‌ها", income: "درآمدها", banks: "بانک‌ها و کارت‌ها",
+  shortcut: "میانبر تراکنش‌ها", operations: "عملیات", expense: "هزینه‌ها", income: "درآمدها", banks: "بانک‌ها و کارت‌ها",
   funds: "صندوق‌ها", balrep: "گزارش مانده حساب‌ها", budget: "بودجه‌بندی", loanchk: "وام‌ها و چک‌ها", contacts: "اشخاص و بدهی‌ها", bills: "یادآوری قبض‌ها",
 };
 
@@ -3913,6 +3955,171 @@ function SmartCaptureOverlay({ onClose, onParsed }) {
   );
 }
 
+/* ---------------------------------------------------------
+   حساب‌ها: درخت حساب‌ها (هزینه‌ها، درآمدها، صندوق‌ها، بانک‌ها، اشخاص، بدهکاران،
+   بستانکاران، دارائی‌ها، بدهی‌ها، سرمایه) همراه با جستجو.
+   هم به‌عنوان صفحه‌ی مدیریت استفاده می‌شود و هم به‌عنوان انتخاب‌گر در ثبت تراکنش.
+--------------------------------------------------------- */
+const ACCOUNT_GROUPS = [
+  { kind: "expense", label: "هزینه‌ها" }, { kind: "income", label: "درآمدها" },
+  { kind: "fund", label: "صندوق‌ها" }, { kind: "bank", label: "بانک‌ها" },
+  { kind: "person", label: "اشخاص" }, { kind: "receivable", label: "بدهکاران" },
+  { kind: "payable", label: "بستانکاران" }, { kind: "asset", label: "دارائی‌ها" },
+  { kind: "liability", label: "بدهی‌ها" }, { kind: "capital", label: "سرمایه" },
+];
+const faKey = (x = "") => String(x).replace(/ي/g, "ی").replace(/ك/g, "ک").toLowerCase().trim();
+function accountPath(categories, c) {
+  const names = [c.name]; let p = c; let guard = 0;
+  while (p?.parentId && guard++ < 8) { p = categories.find((x) => x.id === p.parentId); if (p) names.unshift(p.name); }
+  return [ACCOUNT_GROUPS.find((g) => g.kind === c.kind)?.label || "سایر", ...names];
+}
+function AccountsTree({ categories = [], addCategory, deleteCategory, updateCategory, favorites, toggleFavorite, mode = "manage", value, onPick }) {
+  const st = useStyles();
+  const t = useT();
+  const picking = mode === "pick";
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState({});
+  const [addFor, setAddFor] = useState(null);
+  const [addName, setAddName] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editVal, setEditVal] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [newKind, setNewKind] = useState("expense");
+  const [newName, setNewName] = useState("");
+  const favIds = favorites?.categories || [];
+  const q = faKey(query);
+
+  const hasParent = (c) => c.parentId && categories.some((x) => x.id === c.parentId);
+  const childrenOf = (id) => categories.filter((c) => c.parentId === id);
+  const rootsOf = (kind) => categories.filter((c) => c.kind === kind && !hasParent(c));
+  const toggle = (k) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
+
+  function create(kind, parentId, name) {
+    const nm = String(name || "").trim(); if (!nm) return;
+    const id = uid();
+    addCategory?.({ id, name: nm, kind, ...(parentId ? { parentId } : {}) });
+    setExpanded((e) => ({ ...e, [parentId || `g:${kind}`]: true }));
+    if (picking) onPick?.(id);
+  }
+  function renderAddForm(kind, parentId, depth) {
+    return (
+      <div style={{ display: "flex", gap: 6, padding: "8px 4px", paddingRight: 4 + depth * 18 }}>
+        <input autoFocus value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="نام مورد جدید" style={{ ...st.input, margin: 0, flex: 1 }} />
+        <button onClick={() => { const nm = addName; setAddName(""); setAddFor(null); create(kind, parentId, nm); }} style={{ ...st.primaryBtn, width: "auto", padding: "0 16px" }}>افزودن</button>
+      </div>
+    );
+  }
+  const smallBtn = (color) => ({ background: "none", border: "none", color, cursor: "pointer", padding: 3, display: "flex" });
+  const arrowIcon = (open, color) => <ChevronLeft size={19} color={color || t.sub} style={{ transform: open ? "rotate(-90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />;
+
+  function renderNode(c, depth, flat) {
+    const kids = flat ? [] : childrenOf(c.id);
+    const isOpen = !!expanded[c.id];
+    const selected = picking && c.id === value;
+    const path = flat ? accountPath(categories, c).slice(0, -1).join(" / ") : "";
+    return (
+      <div key={c.id}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "9px 4px", paddingRight: 4 + depth * 18, borderBottom: `1px solid ${t.border}`, background: selected ? "rgba(88,39,119,.08)" : "transparent" }}>
+          {editId === c.id ? (<>
+            <input autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} style={{ flex: 1, padding: "6px 10px", borderRadius: 7, border: `1.5px solid ${t.inputBorder}`, background: t.input, color: t.text, fontSize: 13 }} />
+            <button onClick={() => { if (editVal.trim()) updateCategory?.(c.id, { name: editVal.trim() }); setEditId(null); }} style={{ background: BRAND.green, border: "none", borderRadius: 7, color: "#fff", padding: "6px 10px", cursor: "pointer" }}><Check size={14} /></button>
+            <button onClick={() => setEditId(null)} style={smallBtn(t.sub)}><X size={14} /></button>
+          </>) : (<>
+            <div onClick={picking ? () => onPick?.(c.id) : kids.length ? () => toggle(c.id) : undefined} style={{ flex: 1, minWidth: 0, cursor: picking || kids.length ? "pointer" : "default" }}>
+              <div style={{ fontSize: depth ? 13 : 14, fontWeight: selected ? 800 : depth ? 500 : 600, color: t.text }}>{depth > 0 && "↳ "}{c.name}</div>
+              {flat && path && <div style={{ fontSize: 11, color: t.sub, marginTop: 2 }}>{path}</div>}
+            </div>
+            {selected && <Check size={16} color={BRAND.darkgreen} />}
+            {!picking && toggleFavorite && <button onClick={() => toggleFavorite("categories", c.id)} style={smallBtn("#f5b301")}><Star size={15} fill={favIds.includes(c.id) ? "#f5b301" : "none"} color="#f5b301" /></button>}
+            {!picking && <button onClick={() => { setEditId(c.id); setEditVal(c.name); }} style={smallBtn(BRAND.violet)}><Pencil size={15} /></button>}
+            <button onClick={() => { setAddFor(addFor?.parentId === c.id ? null : { kind: c.kind, parentId: c.id }); setAddName(""); setExpanded((e) => ({ ...e, [c.id]: true })); }} style={smallBtn(BRAND.green)}><Plus size={15} /></button>
+            {!picking && <button onClick={() => { if (window.confirm(`«${c.name}»${childrenOf(c.id).length ? " و زیرمجموعه‌هایش" : ""} حذف شود؟`)) deleteCategory?.(c.id); }} style={smallBtn(BRAND.crimson)}><Trash2 size={15} /></button>}
+            {kids.length > 0 ? <button onClick={() => toggle(c.id)} style={smallBtn(t.sub)}>{arrowIcon(isOpen)}</button> : <span style={{ width: 25, flexShrink: 0 }} />}
+          </>)}
+        </div>
+        {isOpen && kids.map((k) => renderNode(k, depth + 1))}
+        {addFor?.parentId === c.id && renderAddForm(c.kind, c.id, depth + 1)}
+      </div>
+    );
+  }
+
+  function renderGroup(g) {
+    const key = `g:${g.kind}`;
+    const isOpen = !!expanded[key];
+    const roots = rootsOf(g.kind);
+    const addingHere = addFor && addFor.kind === g.kind && !addFor.parentId;
+    return (
+      <div key={g.kind} style={{ ...st.card, marginBottom: 10, overflow: "hidden" }}>
+        <div onClick={() => toggle(key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 12px", cursor: "pointer" }}>
+          <span style={{ fontWeight: 800, fontSize: 14.5, color: t.text }}>{g.label}</span>
+          {arrowIcon(isOpen, BRAND.header)}
+        </div>
+        {isOpen && (
+          <div style={{ padding: "0 8px 8px", borderTop: `1px solid ${t.border}` }}>
+            {roots.length === 0 && <EmptyRow text={`هنوز موردی در «${g.label}» ثبت نشده`} />}
+            {roots.map((c) => renderNode(c, 0))}
+            {addingHere && renderAddForm(g.kind, null, 0)}
+            <div onClick={() => { setAddFor(addingHere ? null : { kind: g.kind, parentId: null }); setAddName(""); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px", cursor: "pointer", color: BRAND.header, fontWeight: 700, fontSize: 13 }}>
+              <span style={{ width: 24, height: 24, borderRadius: "50%", background: BRAND.header, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></span>
+              مورد جدید در «{g.label}»
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const results = q ? categories.filter((c) => faKey(accountPath(categories, c).join(" ")).includes(q)) : [];
+  return (
+    <div>
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={16} color={t.sub} style={{ position: "absolute", top: 13, right: 12 }} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="جستجو در حساب‌ها..." style={{ ...st.input, marginBottom: 0, paddingRight: 36 }} />
+      </div>
+      {q ? (
+        <div style={{ ...st.card, padding: "4px 8px", marginBottom: 12 }}>
+          {results.length === 0 ? <EmptyRow text="موردی پیدا نشد" /> : results.map((c) => renderNode(c, 0, true))}
+        </div>
+      ) : ACCOUNT_GROUPS.map(renderGroup)}
+      <div style={{ ...st.card, padding: 12, marginTop: 4, border: `1.5px dashed ${t.inputBorder}`, boxShadow: "none" }}>
+        <div onClick={() => setShowNew((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", color: BRAND.header, fontWeight: 800, fontSize: 13.5 }}>
+          <span style={{ width: 26, height: 26, borderRadius: "50%", background: BRAND.header, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></span>
+          ایجاد حساب جدید
+        </div>
+        {showNew && (
+          <div style={{ marginTop: 12 }}>
+            <select value={newKind} onChange={(e) => setNewKind(e.target.value)} style={st.input}>
+              {ACCOUNT_GROUPS.map((g) => <option key={g.kind} value={g.kind}>{g.label}</option>)}
+            </select>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="نام حساب" style={st.input} />
+            <button onClick={() => { const nm = newName; setNewName(""); setShowNew(false); create(newKind, null, nm); }} style={st.primaryBtn}>افزودن</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+function AccountPickerField({ categories, value, onChange, addCategory, st }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const selected = categories.find((c) => c.id === value);
+  const display = selected ? accountPath(categories, selected).join(" / ") : "انتخاب حساب";
+  return <>
+    <button type="button" onClick={() => setOpen(true)} style={{ width: "100%", minHeight: 46, marginBottom: 8, padding: "9px 12px", borderRadius: 10, border: `1.5px solid ${t.inputBorder}`, background: t.input, color: selected ? t.text : t.sub, display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "inherit", cursor: "pointer", textAlign: "right" }}>
+      <span style={{ fontSize: 13.5, fontWeight: selected ? 700 : 500 }}>{display}</span><ChevronLeft size={17} style={{ transform: "rotate(90deg)", flexShrink: 0 }} />
+    </button>
+    {open && <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center", maxWidth: 480, margin: "0 auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.bg || t.card, width: "100%", maxHeight: "86vh", overflowY: "auto", borderRadius: "18px 18px 0 0", padding: "16px 14px calc(18px + env(safe-area-inset-bottom, 0px))" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button type="button" onClick={() => setOpen(false)} style={{ border: 0, background: "transparent", color: t.sub, padding: 5 }}><X size={21} /></button>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>حساب‌ها</div><span style={{ width: 31 }} />
+        </div>
+        <AccountsTree mode="pick" categories={categories} addCategory={addCategory} value={value} onPick={(id) => { onChange(id); setOpen(false); }} />
+      </div>
+    </div>}
+  </>;
+}
+
 function CategoryPicker({ categories, value, onChange, kind, st }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -4020,9 +4227,9 @@ function AddTransactionSheet({ accounts, categories, favorites, members = [], ev
 
         {type !== "transfer" ? (
           <>
-            <label style={st.label}>دسته‌بندی</label>
+            <label style={st.label}>حساب‌ها</label>
             <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-              <div style={{ flex: 1 }}><CategoryPicker categories={filteredCats} value={categoryId} onChange={setCategoryId} kind={type} st={st} /></div>
+              <div style={{ flex: 1 }}><AccountPickerField categories={categories} addCategory={onAddCategory} value={categoryId} onChange={setCategoryId} st={st} /></div>
               <button type="button" onClick={() => { setInlineAdd("category"); setInlineName(""); }} style={{ ...miniBtn, width: 44, height: 44, background: BRAND.header, color: "#fff" }} title="افزودن دسته"><Plus size={18} /></button>
             </div>
             <label style={st.label}>{type === "expense" ? "از حساب" : "به حساب"}</label>
@@ -4321,8 +4528,6 @@ function AboutView() { const st=useStyles(); return <div><div style={{...st.card
 --------------------------------------------------------- */
 function SideMenu({ onClose, setSubView, profileName }) {
   const sections=[
-    {title:"حسابداری و مدیریت",items:[["اهداف مالی و پس‌انداز","goals"],["اشخاص و طرف حساب‌ها","persons"],["بدهکاران و بستانکاران","debts"],["حساب‌ها و کارت‌ها","accounts"],["دسته‌بندی‌ها و برچسب‌ها","categories"],["بودجه‌بندی","budgets"],["تراکنش‌های تکرارشونده","recurring"],["چک‌ها","checks"],["وام و اقساط","loans"],["دارایی‌ها","assets"],["واحدهای پولی","currencies"],["یادآوری قبض‌ها","bills"],["اعضای منزل، رویداد و پروژه","tags"],["دوره مالی","periods"],["تقویم شمسی","calendar"]]},
-    {title:"ابزارها",items:[["میانبرهای تراکنش","shortcuts"],["پیامک بانکی","sms"],["ماشین حساب","calculator"],["پشتیبانی و تیکت","support"]]},
     {title:"تنظیمات و برنامه",items:[["ویرایش اطلاعات کاربری","profile"],["پشتیبان‌گیری","backup"],["مدیریت دسترسی","access"],["تنظیمات پایه","basic"],["تنظیمات و امنیت","settings"],["آموزش","tutorial"],["ارسال برنامه به دیگران","share"],["امتیاز به برنامه","rate"],["درباره","about"]]}
   ];
   return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.42)",zIndex:300,maxWidth:480,margin:"0 auto"}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:0,bottom:0,left:0,width:"86%",maxWidth:390,background:"#fff",boxShadow:"3px 0 18px rgba(0,0,0,.22)",overflowY:"auto",paddingTop:"env(safe-area-inset-top,0px)",paddingBottom:"calc(28px + env(safe-area-inset-bottom,0px))"}}><div style={{background:BRAND.header,color:"#fff",padding:"16px",position:"sticky",top:0,zIndex:2}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><RexaLogo size={42}/><div><div style={{fontWeight:800,fontSize:15}}>{profileName||"کاربر Rexa"}</div><div style={{fontSize:11,color:"#d8c9e8",marginTop:3}}>Rexa · نسخه ۵.۱.۲</div></div></div><button onClick={onClose} style={{background:"rgba(255,255,255,.12)",border:0,borderRadius:9,color:"#fff",width:36,height:36}}><X size={21}/></button></div></div><div style={{padding:"8px 14px 0"}}>{sections.map(sec=><div key={sec.title}><div style={{fontSize:11,fontWeight:800,color:BRAND.violet,padding:"13px 6px 7px"}}>{sec.title}</div><div style={{border:"1px solid #eeeaf2",borderRadius:12,overflow:"hidden",marginBottom:6}}>{sec.items.map(([label,key],i)=><div key={key} onClick={()=>setSubView(key)} style={{padding:"12px 10px",borderBottom:i===sec.items.length-1?"none":"1px solid #f0eef3",fontSize:13.5,fontWeight:600,color:"#241a30",background:"#fff"}}>{label}</div>)}</div></div>)}<div style={{textAlign:"center",color:"#918899",fontSize:10.5,padding:"14px 0 10px"}}>Rexa Personal Finance · نسخه ۵.۱.۲ · Android</div></div></div></div>;
