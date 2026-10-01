@@ -931,29 +931,55 @@ function VoiceCaptureButton({ onResult, dark }) {
 
 function BottomNav({ active, setActive, onAdd, hidden = false }) {
   const t = useT();
-  const items = [
+  const dark = t.card === THEME.dark.card;
+  const BAR_H = 64, HUMP = 22, CW = 118; // ارتفاع نوار، برآمدگی وسط، عرض بخش وسط
+  const leftItems = [
     { key: "reports", label: "گزارش‌ها", icon: PieChartIcon },
     { key: "transactions", label: "تراکنش‌ها", icon: Receipt },
+  ];
+  const rightItems = [
     { key: "checks", label: "چک‌ها", icon: FileSpreadsheet },
     { key: "home", label: "خانه", icon: HomeIcon },
   ];
   if (hidden) return null;
-  return <div style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 0, width: "min(480px, 100vw)", minHeight: 72, padding: "7px 6px calc(7px + env(safe-area-inset-bottom, 0px))", background: t.card, borderTop: `1px solid ${t.border}`, display: "grid", gridTemplateColumns: "1fr 1fr 64px 1fr 1fr", alignItems: "center", zIndex: 300, boxShadow: "0 -5px 18px rgba(0,0,0,.10)" }}>
-    <NavBtn it={items[0]} active={active} setActive={setActive} />
-    <NavBtn it={items[1]} active={active} setActive={setActive} />
-    <button onClick={onAdd} aria-label="انتقال بین حساب‌ها" style={{ width: 56, height: 56, borderRadius: "50%", background: BRAND.fab, border: `4px solid ${t.card}`, margin: "-20px auto 0", boxShadow: "0 4px 12px rgba(0,0,0,.25)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
-      <ArrowLeftRight size={25} />
-    </button>
-    <NavBtn it={items[2]} active={active} setActive={setActive} />
-    <NavBtn it={items[3]} active={active} setActive={setActive} />
-  </div>;
+  const seg = { flex: 1, height: BAR_H, background: t.card, display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 2px" };
+  const blue = dark ? "#8fb0ff" : "#2f5fe0";
+  const H = BAR_H + HUMP;
+  const hump = `M0 ${HUMP} C ${CW * 0.2} ${HUMP}, ${CW * 0.28} 0, ${CW / 2} 0 C ${CW * 0.72} 0, ${CW * 0.8} ${HUMP}, ${CW} ${HUMP} L ${CW} ${H} L 0 ${H} Z`;
+  return (
+    <div dir="ltr" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 0, width: "min(480px, 100vw)", zIndex: 300 }}>
+      <div style={{ filter: `drop-shadow(0 -4px 12px ${dark ? "rgba(0,0,0,.5)" : "rgba(40,60,120,.17)"})` }}>
+        <div style={{ display: "flex", alignItems: "flex-end" }}>
+          <div style={{ ...seg, borderTopLeftRadius: 26, marginLeft: 0, marginRight: -0.5 }}>
+            {leftItems.map((it) => <NavBtn key={it.key} it={it} active={active} setActive={setActive} />)}
+          </div>
+          <svg width={CW} height={H} viewBox={`0 0 ${CW} ${H}`} style={{ display: "block", flexShrink: 0 }} aria-hidden="true">
+            <path d={hump} fill={t.card} />
+          </svg>
+          <div style={{ ...seg, borderTopRightRadius: 26, marginLeft: -0.5 }}>
+            {rightItems.map((it) => <NavBtn key={it.key} it={it} active={active} setActive={setActive} />)}
+          </div>
+        </div>
+        <div style={{ height: "env(safe-area-inset-bottom, 0px)", background: t.card }} />
+      </div>
+      <button onClick={onAdd} aria-label="بازکردن منوی ثبت سریع" style={{ position: "absolute", top: -23, left: "50%", transform: "translateX(-50%)", background: "none", border: "none", padding: "2px 14px", color: blue, cursor: "pointer", display: "flex" }}>
+        <ChevronUp size={17} strokeWidth={3} />
+      </button>
+      <button onClick={onAdd} aria-label="انتقال بین حساب‌ها" style={{ position: "absolute", top: 5, left: "50%", transform: "translateX(-50%)", width: 64, height: 64, borderRadius: "50%", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(160deg, #62a8ff 0%, #2f62f0 100%)", boxShadow: `0 0 0 6px ${dark ? "rgba(143,176,255,.14)" : "rgba(79,140,255,.16)"}, 0 9px 20px rgba(47,98,240,.45), inset 0 1px 2px rgba(255,255,255,.55)` }}>
+        <Repeat size={30} strokeWidth={2.4} />
+      </button>
+    </div>
+  );
 }
 function NavBtn({ it, active, setActive }) {
+  const t = useT();
+  const dark = t.card === THEME.dark.card;
   const Icon = it.icon; const isActive = active === it.key;
+  const color = isActive ? (dark ? "#8fb0ff" : "#2f5fe0") : (dark ? "#b7c0d6" : "#4a5778");
   return (
-    <button onClick={() => setActive(it.key)} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: isActive ? BRAND.header : "#8a8a8a", cursor: "pointer", fontFamily: "inherit" }}>
-      <Icon size={22} />
-      <span style={{ fontSize: 11, fontWeight: isActive ? 700 : 500 }}>{it.label}</span>
+    <button onClick={() => setActive(it.key)} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, color, cursor: "pointer", fontFamily: "inherit", minWidth: 58, padding: "4px 0" }}>
+      <Icon size={24} strokeWidth={2} fill={isActive && it.key === "home" ? "currentColor" : "none"} />
+      <span style={{ fontSize: 11, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
     </button>
   );
 }
